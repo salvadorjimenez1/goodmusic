@@ -1,4 +1,6 @@
 import AlbumCard from "../components/AlbumCard"
+import React from "react";
+import Link from "next/link";
 
 const dummyAlbums = [
   {
@@ -31,17 +33,56 @@ const dummyAlbums = [
   },
 ]
 
-export default function HomePage() {
+type Album = {
+  id: number;
+  title: string;
+  artist: string;
+};
+
+async function getAlbums(): Promise<Album[]> {
+  try {
+    const res = await fetch("http://localhost:8000/albums", {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    return res.json();
+  } catch (err) {
+    console.error("Error fetching albums:", err);
+    return [];
+  }
+}
+
+export default async function HomePage() {
+  const albums = await getAlbums();
+
   return (
     <div>
       <h2 className="text-2xl font-bold mb-6 text-white">Trending Albums 🎵</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-        {dummyAlbums.map((album) => (
-          <AlbumCard
-            key={album.id} {...album}
-          />
+
+     <ul className="space-y-2">
+      {albums.map((album) => (
+        <li key={album.id} style={{paddingLeft: '15px'}} className="bg-white rounded-2xl shadow-md overflow-hidden hover:shadow-lg transition cursor-pointer">
+        <Link className= "text-lg font-semibold" href={`/album/${album.id}`}>
+            {album.title} <span className="text-gray-600">by {album.artist}</span>
+        </Link>
+        </li>
         ))}
-      </div>
+      </ul>
     </div>
   )
 }
+  // return (
+  //   <div className="p-6">
+  //     <h1 className="text-xl font-bold mb-4">Albums</h1>
+
+  //     <ul className="space-y-2">
+  //       {albums.map((album) => (
+  //         <li key={album.id} className="border p-2 rounded">
+  //           <Link href={`/album/${album.id}`}>
+  //             {album.title} <span className="text-gray-500">by {album.artist}</span>
+  //           </Link>
+  //         </li>
+  //       ))}
+  //     </ul>
+  //   </div>
+  // );
