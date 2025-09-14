@@ -12,9 +12,6 @@ Backend: FastAPI + Postgres
 
 ## Setup
 1. Clone repo
-2. `docker-compose up` (coming soon)
+2. `docker-compose up --build`
 3. `cd apps/web && npm run dev`
 4. `cd apps/api && uvicorn api.main:app --reload`
-
-
-Test commit
