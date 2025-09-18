@@ -1,9 +1,11 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Optional, List
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Optional
+from enum import Enum
+from datetime import datetime
 
 # ---------- USERS ----------
 class UserBase(BaseModel):
-    username: str
+    username: str = Field(..., min_length=3, max_length=30)
 
 class UserCreate(UserBase):
     pass
@@ -15,7 +17,7 @@ class UserResponse(UserBase):
 
 # ---------- ARTISTS ----------
 class ArtistBase(BaseModel):
-    name: str
+    name: str = Field(..., min_length=1, max_length=100)
 
 class ArtistResponse(ArtistBase):
     model_config = ConfigDict(from_attributes=True)
@@ -24,12 +26,12 @@ class ArtistResponse(ArtistBase):
 
 # ---------- ALBUMS ----------
 class AlbumBase(BaseModel):
-    title: str
-    year: Optional[int] = None
+    title: str = Field(..., min_length=1, max_length=100)
+    year: Optional[int] = Field(None, ge=1900, le=2100) 
     cover_url: Optional[str] = None
 
 class AlbumCreate(AlbumBase):
-    artist: str  # name of artist
+    artist: str = Field(..., min_length=1, max_length=100)  # name of artist
 
 class AlbumResponse(AlbumBase):
     model_config = ConfigDict(from_attributes=True)
@@ -39,7 +41,7 @@ class AlbumResponse(AlbumBase):
 
 # ---------- REVIEWS ----------
 class ReviewBase(BaseModel):
-    content: str
+    content: str = Field(..., min_length=5, max_length=1000)
 
 class ReviewCreate(ReviewBase):
     user_id: int
@@ -53,8 +55,13 @@ class ReviewResponse(ReviewBase):
 
 
 # ---------- USER ALBUM STATUS ----------
+class StatusEnum(str, Enum):
+    listened = "listened"
+    want_to_listen = "want-to-listen"
+    favorite = "favorite"
+
 class UserAlbumStatusBase(BaseModel):
-    status: str
+    status: StatusEnum
 
 class UserAlbumStatusCreate(UserAlbumStatusBase):
     user_id: int
@@ -63,6 +70,7 @@ class UserAlbumStatusCreate(UserAlbumStatusBase):
 class UserAlbumStatusResponse(UserAlbumStatusBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    created_at: datetime
     user: Optional[UserResponse] = None       # <-- nested UserResponse
     album: Optional[AlbumResponse] = None     # <-- nested AlbumResponse
     
