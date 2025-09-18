@@ -156,8 +156,7 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist),
-            selectinload(User.statuses).selectinload(UserAlbumStatus.album).selectinload(Album.artist),
+            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist)
         )
         .where(User.id == user_id)
     )
