@@ -151,6 +151,22 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
 
     return user
 
+@app.get("/users/{user_id}/reviews", response_model=UserDetailResponse)
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist),
+            selectinload(User.statuses).selectinload(UserAlbumStatus.album).selectinload(Album.artist),
+        )
+        .where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return user
+
 @app.post("/users", response_model=UserResponse)
 async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     # check if user exists
