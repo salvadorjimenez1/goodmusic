@@ -15,3 +15,6 @@ Backend: FastAPI + Postgres
 2. `docker-compose up --build`
 3. `cd apps/web && npm run dev`
 4. `cd apps/api && uvicorn api.main:app --reload`
+
+## Testing
+1. Always run through your interpreter: `python -m pytest -v`
