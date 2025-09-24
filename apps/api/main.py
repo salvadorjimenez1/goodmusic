@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Body
+from fastapi import FastAPI, Depends, HTTPException, Body, status
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select
@@ -13,10 +13,16 @@ from schemas import (
                      UserAlbumStatusCreate, 
                      UserAlbumStatusResponse, 
                      UserDetailResponse, 
-                     DeleteResponse )
+                     DeleteResponse,
+                     UserOut,
+                     Token)
 
 from db import get_db, engine, Base
 from models import Album, Artist, Review, UserAlbumStatus, User
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from auth_utils import verify_password, get_password_hash, create_access_token, create_refresh_token
+from jose import JWTError, jwt
+from config import SECRET_KEY, ALGORITHM
 
 
 @asynccontextmanager
@@ -28,6 +34,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    return user
 
 @app.get("/")
 async def read_root():
@@ -61,7 +88,10 @@ async def get_album(album_id: int, db: AsyncSession = Depends(get_db)):
     return album
 
 @app.post("/albums", response_model=AlbumResponse)
-async def create_album(payload: AlbumCreate, db: AsyncSession = Depends(get_db)):
+async def create_album(
+    payload: AlbumCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User= Depends(get_current_user)):
     # Find or create artist by name
     result = await db.execute(select(Artist).where(Artist.name == payload.artist))
     artist_obj = result.scalar_one_or_none()
@@ -94,6 +124,7 @@ async def update_album(
     title: str | None = None,
     artist: str | None = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(
         select(Album).options(selectinload(Album.artist)).where(Album.id == album_id)
@@ -118,7 +149,10 @@ async def update_album(
     return album
 
 @app.delete("/albums/{album_id}", response_model=DeleteResponse)
-async def delete_album(album_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_album(
+    album_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     result = await db.execute(select(Album).where(Album.id == album_id))
     album = result.scalar_one_or_none()
     if not album:
@@ -156,7 +190,8 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist)
+            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist),
+            selectinload(User.statuses).selectinload(UserAlbumStatus.album).selectinload(Album.artist),
         )
         .where(User.id == user_id)
     )
@@ -261,7 +296,11 @@ async def get_album_reviews(album_id: int, db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 @app.post("/albums/{album_id}/reviews", response_model=ReviewResponse)
-async def add_review(album_id: int, payload: ReviewCreate, db: AsyncSession = Depends(get_db)):
+async def add_review(
+    album_id: int,
+    payload: ReviewCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     album = await db.get(Album, album_id)
     if not album:
         raise HTTPException(status_code=404, detail="Album not found")
@@ -274,10 +313,21 @@ async def add_review(album_id: int, payload: ReviewCreate, db: AsyncSession = De
     db.add(review)
     await db.commit()
     await db.refresh(review)
-    return review
+    result = await db.execute(
+        select(Review)
+        .options(
+            selectinload(Review.user),
+            selectinload(Review.album).selectinload(Album.artist),
+        )
+        .where(Review.id == review.id)
+    )
+    return result.scalar_one()
 
 @app.post("/reviews", response_model=ReviewResponse)
-async def create_review(payload: ReviewCreate, db: AsyncSession = Depends(get_db)):
+async def create_review(
+    payload: ReviewCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     # Ensure user exists
     user_res = await db.execute(select(User).where(User.id == payload.user_id))
     user = user_res.scalar_one_or_none()
@@ -308,7 +358,10 @@ async def create_review(payload: ReviewCreate, db: AsyncSession = Depends(get_db
     return result.scalar_one()
     
 @app.delete("/reviews/{review_id}", response_model=DeleteResponse)
-async def delete_review(review_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_review(
+    review_id: int, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     result = await db.execute(select(Review).where(Review.id == review_id))
     review = result.scalar_one_or_none()
     if not review:
@@ -321,7 +374,10 @@ async def delete_review(review_id: int, db: AsyncSession = Depends(get_db)):
 # User Album Status Endpoints
 
 @app.post("/statuses", response_model=UserAlbumStatusResponse)
-async def create_status(payload: UserAlbumStatusCreate, db: AsyncSession = Depends(get_db)):
+async def create_status(
+    payload: UserAlbumStatusCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     user = await db.get(User, payload.user_id)
     album = await db.get(Album, payload.album_id)
     if not user or not album:
@@ -330,8 +386,15 @@ async def create_status(payload: UserAlbumStatusCreate, db: AsyncSession = Depen
     new_status = UserAlbumStatus(user=user, album=album, status=payload.status)
     db.add(new_status)
     await db.commit()
-    await db.refresh(new_status)
-    return new_status
+    result = await db.execute(
+        select(UserAlbumStatus)
+        .options(
+            selectinload(UserAlbumStatus.user),
+            selectinload(UserAlbumStatus.album).selectinload(Album.artist),
+        )
+        .where(UserAlbumStatus.id == new_status.id)
+    )
+    return result.scalar_one()
 
 @app.get("/users/{user_id}/statuses", response_model=list[UserAlbumStatusResponse])
 async def get_user_statuses(user_id: int, db: AsyncSession = Depends(get_db)):
@@ -361,7 +424,11 @@ async def get_album_statuses(album_id: int, db: AsyncSession = Depends(get_db)):
     return statuses
 
 @app.post("/albums/{album_id}/statuses", response_model=UserAlbumStatusResponse)
-async def add_status(album_id: int, payload: UserAlbumStatusCreate, db: AsyncSession = Depends(get_db)):
+async def add_status(
+    album_id: int,
+    payload: UserAlbumStatusCreate, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
     # Ensure album exists
     album_res = await db.execute(select(Album).where(Album.id == album_id))
     album = album_res.scalar_one_or_none()
@@ -396,6 +463,7 @@ async def update_status(
     status_id: int,
     status: str = Body(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     result = await db.execute(
         select(UserAlbumStatus)
@@ -415,7 +483,11 @@ async def update_status(
     return s
 
 @app.delete("/statuses/{status_id}", response_model=DeleteResponse)
-async def delete_status(status_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_status(
+    status_id: int, 
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+    ):
     result = await db.execute(select(UserAlbumStatus).where(UserAlbumStatus.id == status_id))
     s = result.scalar_one_or_none()
     if not s:
@@ -424,3 +496,51 @@ async def delete_status(status_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(s)
     await db.commit()
     return DeleteResponse(status="deleted", id=status_id)
+
+# Auth endpoints
+
+@app.post("/register", response_model=UserOut)
+async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == user.username))
+    existing = result.scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    hashed_pw = get_password_hash(user.password)
+    new_user = User(username=user.username, hashed_password=hashed_pw)
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+    return new_user
+
+@app.post("/login", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == form_data.username))
+    db_user = result.scalar_one_or_none()
+    if not db_user or not verify_password(form_data.password, db_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    access_token = create_access_token(data={"sub": db_user.username})
+    refresh_token = create_refresh_token(data={"sub": db_user.username})
+    return {"access_token": access_token, 
+            "refresh_token": refresh_token,
+            "token_type": "bearer"}
+    
+@app.post("/refresh")
+async def refresh_token(refresh_token: str = Body(...)):
+    try:
+        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+        # issue new short-lived access token
+        new_access_token = create_access_token({"sub": username})
+        return {"access_token": new_access_token, "token_type": "bearer"}
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+@app.get("/me", response_model=UserOut)
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    return current_user

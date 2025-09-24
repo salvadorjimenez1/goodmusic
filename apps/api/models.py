@@ -7,6 +7,7 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=False)
 
     # Relationships
     reviews = relationship("Review", back_populates="user", cascade="all, delete-orphan")

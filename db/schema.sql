@@ -2,45 +2,42 @@
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
+    hashed_password TEXT,
     created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Artists table
+CREATE TABLE IF NOT EXISTS artists (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(200) UNIQUE NOT NULL
 );
 
 -- Albums table
 CREATE TABLE IF NOT EXISTS albums (
     id SERIAL PRIMARY KEY,
     title VARCHAR(200) NOT NULL,
-    artist VARCHAR(200) NOT NULL,
+    year INT,
     cover_url TEXT,
-    external_id VARCHAR(100), -- e.g. Spotify/MusicBrainz ID
-    created_at TIMESTAMP DEFAULT NOW()
+    artist_id INT NOT NULL REFERENCES artists(id) ON DELETE CASCADE
 );
 
 -- Reviews table
 CREATE TABLE IF NOT EXISTS reviews (
     id SERIAL PRIMARY KEY,
+    content TEXT NOT NULL,
     user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    album_id INT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
-    rating INT CHECK (rating >= 1 AND rating <= 10),
-    content TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
+    album_id INT NOT NULL REFERENCES albums(id) ON DELETE CASCADE
 );
 
 -- User Album Status table
-CREATE TYPE album_status AS ENUM ('want_to_listen', 'listened');
-
 CREATE TABLE IF NOT EXISTS user_album_status (
     id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    album_id INT NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
-    status album_status NOT NULL,
+    status VARCHAR(50) NOT NULL, -- "listened", "want-to-listen", "favorite"
     created_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, album_id)
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    album_id INT NOT NULL REFERENCES albums(id) ON DELETE CASCADE
 );
 
--- Create an index for faster lookups on product name
-CREATE INDEX idx_album_name ON albums(title);
-
--- Create an index for faster lookups on customer email
-CREATE INDEX idx_user_email ON users(email);
+-- Indexes
+CREATE INDEX idx_album_title ON albums(title);
+CREATE INDEX idx_user_username ON users(username);

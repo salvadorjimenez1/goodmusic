@@ -4,3 +4,12 @@ sqlalchemy[asyncio]
 asyncpg
 alembic
 python-dotenv
+python-jose[cryptography]
+bcrypt==4.0.1
+passlib[bcrypt]
+python-multipart
+pytest
+pytest-asyncio
+httpx
+
+aiosqlite
