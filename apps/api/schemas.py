@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional
+from typing import Optional, Generic, TypeVar
 from enum import Enum
 from datetime import datetime
 
@@ -8,8 +8,7 @@ class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=30)
 
 class UserCreate(UserBase):
-    username: str
-    password: Optional[str] = None
+    password: str = Field(..., min_length=6, max_length=128)
     
 class UserOut(BaseModel):
     id:int
@@ -92,7 +91,22 @@ class UserDetailResponse(UserResponse):
     statuses: list[UserAlbumStatusResponse] = []
 
 
+class UserReviewsResponse(BaseModel):
+    reviews: list[ReviewResponse]
+
+
 # ---------- DELETE RESPONSE ----------    
 class DeleteResponse(BaseModel):
     status: str
     id: int
+
+# ---------- PAGINATION RESPONSE ----------   
+T = TypeVar("T")
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    total: int
+    items: list[T]
+
+# ---------- ERROR RESPONSE ----------
+class ErrorResponse(BaseModel):
+    detail: str
