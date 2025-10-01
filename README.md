@@ -18,3 +18,8 @@ Backend: FastAPI + Postgres
 
 ## Testing
 1. Always run through your interpreter: `python -m pytest -v`
+
+## Alembic
+### Every time you change models.py, just:
+1. Run `alembic revision --autogenerate -m "change description"`.
+2. Run `alembic upgrade head`.
