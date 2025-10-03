@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Body, status, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, Body, status, Query, Request, APIRouter
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,8 +7,6 @@ from sqlalchemy.orm import selectinload
 from schemas import ( 
                      UserCreate, 
                      UserResponse, 
-                     AlbumCreate, 
-                     AlbumResponse, 
                      ReviewCreate, 
                      ReviewResponse, 
                      UserAlbumStatusCreate, 
@@ -20,14 +18,19 @@ from schemas import (
                      ErrorResponse,
                      UserOut,
                      Token,
-                     StatusEnum,)
+                     StatusEnum,
+                     SpotifyAlbumImport,
+                     UserAlbumStatusUpdate,)
 
 from db import get_db, engine, Base
-from models import Album, Artist, Review, UserAlbumStatus, User
+from models import Review, UserAlbumStatus, User
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from auth_utils import verify_password, get_password_hash, create_access_token, create_refresh_token
 from jose import JWTError, jwt
-from config import SECRET_KEY, ALGORITHM
+from config import SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
+import httpx, base64, time
+from datetime import datetime, timedelta
+from fastapi.middleware.cors import CORSMiddleware
 
 
 DEFAULT_ERROR_RESPONSES = {
@@ -37,6 +40,37 @@ DEFAULT_ERROR_RESPONSES = {
     404: {"model": ErrorResponse},
 }
 
+
+_spotify_app_token: str | None = None
+_spotify_token_expiry: float = 0
+
+async def get_spotify_app_token() -> str:
+    """Fetch & cache a Spotify client credentials token"""
+    global _spotify_app_token, _spotify_token_expiry
+
+    if _spotify_app_token and time.time() < _spotify_token_expiry:
+        return _spotify_app_token
+
+    auth_header = base64.b64encode(
+        f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}".encode()
+    ).decode()
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "client_credentials"},
+            headers={"Authorization": f"Basic {auth_header}"}
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to get Spotify token")
+
+    data = resp.json()
+    _spotify_app_token = data["access_token"]
+    _spotify_token_expiry = time.time() + data["expires_in"] - 60  # renew 1m early
+    return _spotify_app_token
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure tables exist with the async engine
@@ -45,6 +79,14 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],  # allow POST, GET, OPTIONS, etc.
+    allow_headers=["*"],
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -76,6 +118,93 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         content=ErrorResponse(detail=str(exc.detail)).model_dump(),
     )
 
+@app.get("/spotify/login", tags=["Spotify"])
+async def spotify_login():
+    url = (
+        "https://accounts.spotify.com/authorize"
+        f"?client_id={SPOTIFY_CLIENT_ID}"
+        "&response_type=code"
+        f"&redirect_uri={SPOTIFY_REDIRECT_URI}"
+        "&scope=user-read-email user-library-read"
+    )
+    return {"auth_url": url}
+
+@app.get("/spotify/callback", tags=["Spotify"])
+async def spotify_callback(code: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://accounts.spotify.com/api/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": SPOTIFY_REDIRECT_URI,
+                "client_id": SPOTIFY_CLIENT_ID,
+                "client_secret": SPOTIFY_CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Spotify auth failed")
+
+    tokens = resp.json()
+    current_user.spotify_access_token = tokens["access_token"]
+    current_user.spotify_refresh_token = tokens.get("refresh_token")
+    current_user.spotify_token_expires = datetime.utcnow() + timedelta(seconds=tokens["expires_in"])
+    db.add(current_user)
+    await db.commit()
+    return {"status": "linked", "expires_in": tokens["expires_in"]}
+
+async def refresh_spotify_token(user: User, db: AsyncSession):
+    if user.spotify_refresh_token is None:
+        raise HTTPException(status_code=400, detail="No refresh token")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://accounts.spotify.com/api/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": user.spotify_refresh_token,
+                "client_id": SPOTIFY_CLIENT_ID,
+                "client_secret": SPOTIFY_CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail="Spotify refresh failed")
+
+    tokens = resp.json()
+    user.spotify_access_token = tokens["access_token"]
+    user.spotify_token_expires = datetime.utcnow() + timedelta(seconds=tokens["expires_in"])
+    db.add(user)
+    await db.commit()
+    return user.spotify_access_token
+
+@app.get("/spotify/search", tags=["Spotify"])
+async def search_spotify_albums(query: str):
+    token = await get_spotify_app_token()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            "https://api.spotify.com/v1/search",
+            params={"q": query, "type": "album"},
+            headers={"Authorization": f"Bearer {token}"}
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
+@app.get("/spotify/albums/{spotify_album_id}", tags=["Spotify"])
+async def get_spotify_album(spotify_album_id: str):
+    token = await get_spotify_app_token()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"https://api.spotify.com/v1/albums/{spotify_album_id}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+    return resp.json()
+
 @app.get("/")
 async def read_root():
     return {"message": "API is running 🎶"}
@@ -87,121 +216,6 @@ async def ping_db(db: AsyncSession = Depends(get_db)):
         return {"status": "ok", "db": "connected"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
-
-# Album endpoints
-@app.get("/albums",
-         response_model=PaginatedResponse[AlbumResponse],
-         responses=DEFAULT_ERROR_RESPONSES, tags=["Albums"],
-         description="Get a paginated list of albums with optional filtering by artist or year."
-         )
-async def get_albums(
-    db: AsyncSession = Depends(get_db),
-    limit: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    offset: int = Query(0, ge=0, description="How many items to skip"),
-    artist: str | None = Query(None, description="Filter by artist name"),
-    year: int | None = Query(None, description="Filter by album year"),
-    ):
-    
-    query = select(Album).options(selectinload(Album.artist))
-    
-    if artist:
-        query = query.join(Album.artist).where(Artist.name.ilike(f"%{artist}%"))
-    if year:
-        query = query.where(Album.year == year)
-        
-    # Count total albums
-    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = total_result.scalar()
-    
-    # Fetch paginated albums
-    result = await db.execute(query.offset(offset).limit(limit))
-    albums = result.scalars().all()
-    return {"total": total, "items": albums}
-
-@app.get("/albums/{album_id}", response_model=AlbumResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Albums"])
-async def get_album(album_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Album).options(selectinload(Album.artist)).where(Album.id == album_id)
-    )
-    album = result.scalar_one_or_none()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-    return album
-
-@app.post("/albums", response_model=AlbumResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Albums"])
-async def create_album(
-    payload: AlbumCreate, 
-    db: AsyncSession = Depends(get_db),
-    current_user: User= Depends(get_current_user)):
-    # Find or create artist by name
-    result = await db.execute(select(Artist).where(Artist.name == payload.artist))
-    artist_obj = result.scalar_one_or_none()
-    if not artist_obj:
-        artist_obj = Artist(name=payload.artist)
-        db.add(artist_obj)
-        await db.flush()
-
-    # Create album
-    new_album = Album(
-        title=payload.title,
-        year=payload.year,
-        cover_url=payload.cover_url,
-        artist=artist_obj,
-    )
-    db.add(new_album)
-    await db.commit()
-    await db.refresh(new_album)
-
-    # Re-query with artist eagerly loaded
-    result = await db.execute(
-        select(Album).options(selectinload(Album.artist)).where(Album.id == new_album.id)
-    )
-    album = result.scalar_one()
-    return album
-
-@app.patch("/albums/{album_id}", response_model=AlbumResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Albums"])
-async def update_album(
-    album_id: int,
-    title: str | None = None,
-    artist: str | None = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    result = await db.execute(
-        select(Album).options(selectinload(Album.artist)).where(Album.id == album_id)
-    )
-    album = result.scalar_one_or_none()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    if title:
-        album.title = title
-    if artist:
-        ar_res = await db.execute(select(Artist).where(Artist.name == artist))
-        artist_obj = ar_res.scalar_one_or_none()
-        if not artist_obj:
-            artist_obj = Artist(name=artist)
-            db.add(artist_obj)
-            await db.flush()
-        album.artist = artist_obj
-
-    await db.commit()
-    await db.refresh(album)
-    return album
-
-@app.delete("/albums/{album_id}", response_model=DeleteResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Albums"])
-async def delete_album(
-    album_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)):
-    result = await db.execute(select(Album).where(Album.id == album_id))
-    album = result.scalar_one_or_none()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    await db.delete(album)
-    await db.commit()
-    return DeleteResponse(status="deleted", id=album_id)
 
 # User Endpoints
 @app.get("/users", response_model=PaginatedResponse[UserResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
@@ -231,8 +245,8 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(User)
         .options(
-            selectinload(User.reviews).selectinload(Review.album).selectinload(Album.artist),
-            selectinload(User.statuses).selectinload(UserAlbumStatus.album).selectinload(Album.artist),
+            selectinload(User.reviews),
+            selectinload(User.statuses),
         )
         .where(User.id == user_id)
     )
@@ -298,141 +312,56 @@ async def get_reviews(
     limit: int = Query(10, ge=1, le=100, description="Number of items per page"),
     offset: int = Query(0, ge=0, description="How many reviews to skip"),
     user_id: int | None = Query(None, description="Filter by user ID"),
-    album_id: int | None = Query(None, description="Filter by album ID"),
-    ):
-    query = select(Review).options(
-        selectinload(Review.user),
-        selectinload(Review.album).selectinload(Album.artist)
-    )
-    
+    spotify_album_id: str | None = Query(None),
+):
+    query = select(Review).options(selectinload(Review.user))
     if user_id:
         query = query.where(Review.user_id == user_id)
-    if album_id:
-        query = query.where(Review.album_id == album_id)
-    
-    # Count total albums
-    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = total_result.scalar()
-    
-    # Fetch paginated reviews with eager-loading
-    result = await db.execute(query.offset(offset).limit(limit))
-    reviews = result.scalars().all()
+    if spotify_album_id:
+        query = query.where(Review.spotify_album_id == spotify_album_id)
 
-    return {"total": total, "items": reviews}
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar()
+    result = await db.execute(query.offset(offset).limit(limit))
+    return {"total": total, "items": result.scalars().all()}
 
 @app.get("/reviews/{review_id}", response_model=ReviewResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
 async def get_all_reviews(review_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-    select(Review)
-    .options(
-        selectinload(Review.user),
-        selectinload(Review.album).selectinload(Album.artist)
-    )
-    .where(Review.id == review_id)
-    )
-    review = result.scalar_one_or_none()
+    review = await db.get(Review, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     return review
 
-@app.get("/albums/{album_id}/reviews", response_model=PaginatedResponse[ReviewResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
-async def get_album_reviews(
-    album_id: int, 
-    db: AsyncSession = Depends(get_db),
-    limit: int = Query(10, ge=1, le=100, description="Number of reviews per page"),
-    offset: int = Query(0, ge=0, description="How many reviews to skip"),
-    ):
-    # Count total reviews for this album
-    total_result = await db.execute(
-        select(func.count()).select_from(Review).where(Review.album_id == album_id)
-    )
-    total = total_result.scalar()
-    
-    result = await db.execute(
-        select(Review)
-        .where(Review.album_id == album_id)
-        .options(selectinload(Review.album).selectinload(Album.artist),
-                 selectinload(Review.user))
-        .offset(offset)
-        .limit(limit)
-    )
-    reviews = result.scalars().all()
-    return {"total": total, "items": reviews}
-
-@app.post("/albums/{album_id}/reviews", response_model=ReviewResponse)
-async def add_review(
-    album_id: int,
+@app.post("/reviews", response_model=ReviewResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
+async def create_review(
     payload: ReviewCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)):
-    album = await db.get(Album, album_id)
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
+    current_user: User = Depends(get_current_user)
+):
     user = await db.get(User, payload.user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    review = Review(content=payload.content, user=user, album=album)
+    review = Review(
+        content=payload.content,
+        user=user,
+        spotify_album_id=payload.spotify_album_id
+    )
     db.add(review)
     await db.commit()
     await db.refresh(review)
-    result = await db.execute(
-        select(Review)
-        .options(
-            selectinload(Review.user),
-            selectinload(Review.album).selectinload(Album.artist),
-        )
-        .where(Review.id == review.id)
-    )
-    return result.scalar_one()
-
-@app.post("/reviews", response_model=ReviewResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
-async def create_review(
-    payload: ReviewCreate, 
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)):
-    # Ensure user exists
-    user_res = await db.execute(select(User).where(User.id == payload.user_id))
-    user = user_res.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Ensure album exists
-    album_res = await db.execute(select(Album).where(Album.id == payload.album_id))
-    album = album_res.scalar_one_or_none()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    # Create review
-    new_review = Review(content=payload.content, user=user, album=album)
-    db.add(new_review)
-    await db.commit()
-    await db.refresh(new_review)
-
-    # Reload with relationships
-    result = await db.execute(
-        select(Review)
-        .options(
-            selectinload(Review.user),
-            selectinload(Review.album).selectinload(Album.artist)
-        )
-        .where(Review.id == new_review.id)
-    )
-    return result.scalar_one()
+    return review
     
 @app.delete("/reviews/{review_id}", response_model=DeleteResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
 async def delete_review(
-    review_id: int, 
+    review_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)):
-    result = await db.execute(select(Review).where(Review.id == review_id))
-    review = result.scalar_one_or_none()
+    current_user: User = Depends(get_current_user)
+):
+    review = await db.get(Review, review_id)
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
-    
-    if review.user != current_user.id:
-        raise HTTPException(status_code=403, detail="This user not allowed to delete this review")
+    if review.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this review")
 
     await db.delete(review)
     await db.commit()
@@ -440,28 +369,26 @@ async def delete_review(
 
 # User Album Status Endpoints
 
-@app.post("/statuses", response_model=UserAlbumStatusResponse)
+@app.post("/statuses", response_model=UserAlbumStatusResponse, tags=["Statuses"])
 async def create_status(
     payload: UserAlbumStatusCreate, 
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)):
+    current_user: User = Depends(get_current_user)
+    ):
     user = await db.get(User, payload.user_id)
-    album = await db.get(Album, payload.album_id)
-    if not user or not album:
-        raise HTTPException(status_code=404, detail="User or Album not found")
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    new_status = UserAlbumStatus(user=user, album=album, status=payload.status)
-    db.add(new_status)
-    await db.commit()
-    result = await db.execute(
-        select(UserAlbumStatus)
-        .options(
-            selectinload(UserAlbumStatus.user),
-            selectinload(UserAlbumStatus.album).selectinload(Album.artist),
-        )
-        .where(UserAlbumStatus.id == new_status.id)
+    status = UserAlbumStatus(
+        user=user,
+        spotify_album_id=payload.spotify_album_id,
+        status=payload.status,
+        is_favorite=payload.is_favorite
     )
-    return result.scalar_one()
+    db.add(status)
+    await db.commit()
+    await db.refresh(status)
+    return status
 
 @app.get("/users/{user_id}/statuses",
          response_model=PaginatedResponse[UserAlbumStatusResponse],
@@ -476,114 +403,44 @@ async def get_user_statuses(
     offset: int = Query(0, ge=0, description="How many statuses to skip"),
     status: StatusEnum | None = Query(None, description="Filter by status"),
     ):
-    query = (
-        select(UserAlbumStatus)
-        .options(
-            selectinload(UserAlbumStatus.user),
-            selectinload(UserAlbumStatus.album).selectinload(Album.artist)
-        )
-        .where(UserAlbumStatus.user_id == user_id)
-    )
-
-    # optional filter
+    query = select(UserAlbumStatus).options(selectinload(UserAlbumStatus.user)).where(UserAlbumStatus.user_id == user_id)
     if status:
         query = query.where(UserAlbumStatus.status == status)
 
-    # count total
-    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
-    total = total_result.scalar()
-
-    # fetch page
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar()
     result = await db.execute(query.offset(offset).limit(limit))
-    statuses = result.scalars().all()
-    return {"total": total, "items": statuses}
+    return {"total": total, "items": result.scalars().all()}
     
-@app.get("/albums/{album_id}/statuses", response_model=PaginatedResponse[UserAlbumStatusResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Statuses"])
+@app.get("/spotify/albums/{spotify_album_id}/statuses", response_model=PaginatedResponse[UserAlbumStatusResponse], tags=["Statuses"])
 async def get_album_statuses(
-    album_id: int, 
+    spotify_album_id: int, 
     db: AsyncSession = Depends(get_db),
     limit: int = Query(10, ge=1, le=100, description="Number of statuses per page"),
     offset: int = Query(0, ge=0, description="How many statuses to skip"),
     ):
-    # Count total statuses for this album
-    total_result = await db.execute(
-        select(func.count()).select_from(UserAlbumStatus).where(UserAlbumStatus.album_id == album_id)
-    )
-    total = total_result.scalar()
-    
-    result = await db.execute(
-        select(UserAlbumStatus)
-        .options(
-            selectinload(UserAlbumStatus.user),
-            selectinload(UserAlbumStatus.album).selectinload(Album.artist)
-        )
-        .where(UserAlbumStatus.album_id == album_id)
-        .order_by(UserAlbumStatus.created_at.asc())
-        .offset(offset)
-        .limit(limit)
-    )
-    statuses = result.scalars().all()
-    return  {"total": total, "items": statuses}
-
-@app.post("/albums/{album_id}/statuses", response_model=UserAlbumStatusResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Statuses"])
-async def add_status(
-    album_id: int,
-    payload: UserAlbumStatusCreate, 
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    # Ensure album exists
-    album_res = await db.execute(select(Album).where(Album.id == album_id))
-    album = album_res.scalar_one_or_none()
-    if not album:
-        raise HTTPException(status_code=404, detail="Album not found")
-
-    # Ensure user exists
-    user_res = await db.execute(select(User).where(User.id == payload.user_id))
-    user = user_res.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Create status entry
-    new_status = UserAlbumStatus(user=user, album=album, status=payload.status)
-    db.add(new_status)
-    await db.commit()
-    await db.refresh(new_status)
-
-    # Reload with relationships for nested schema
-    result = await db.execute(
-        select(UserAlbumStatus)
-        .options(
-            selectinload(UserAlbumStatus.user),
-            selectinload(UserAlbumStatus.album).selectinload(Album.artist)
-        )
-        .where(UserAlbumStatus.id == new_status.id)
-    )
-    return result.scalar_one()
+    query = select(UserAlbumStatus).options(selectinload(UserAlbumStatus.user)).where(UserAlbumStatus.spotify_album_id == spotify_album_id)
+    total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar()
+    result = await db.execute(query.offset(offset).limit(limit))
+    return {"total": total, "items": result.scalars().all()}
 
 @app.patch("/statuses/{status_id}", response_model=UserAlbumStatusResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Statuses"])
 async def update_status(
     status_id: int,
-    status: str = Body(...),
+    payload: UserAlbumStatusUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(UserAlbumStatus)
-        .options(
-            selectinload(UserAlbumStatus.user),
-            selectinload(UserAlbumStatus.album).selectinload(Album.artist)
-        )
-        .where(UserAlbumStatus.id == status_id)
-    )
-    s = result.scalar_one_or_none()
+    s = await db.get(UserAlbumStatus, status_id)
     if not s:
         raise HTTPException(status_code=404, detail="Status not found")
-
     if s.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="This user not allowed to update this status")
+        raise HTTPException(status_code=403, detail="Not allowed to update")
 
-    s.status = status
+    if payload.status is not None:
+        s.status = payload.status
+    if payload.is_favorite is not None:
+        s.is_favorite = payload.is_favorite
+
     await db.commit()
     await db.refresh(s)
     return s
@@ -594,10 +451,11 @@ async def delete_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
     ):
-    result = await db.execute(select(UserAlbumStatus).where(UserAlbumStatus.id == status_id))
-    s = result.scalar_one_or_none()
+    s = await db.get(UserAlbumStatus, status_id)
     if not s:
         raise HTTPException(status_code=404, detail="Status not found")
+    if s.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not allowed to delete")
 
     await db.delete(s)
     await db.commit()
