@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from schemas import ( 
                      UserCreate, 
                      UserResponse, 
@@ -20,10 +21,11 @@ from schemas import (
                      Token,
                      StatusEnum,
                      SpotifyAlbumImport,
-                     UserAlbumStatusUpdate,)
+                     UserAlbumStatusUpdate,
+                     FollowListResponse)
 
 from db import get_db, engine, Base
-from models import Review, UserAlbumStatus, User
+from models import Review, UserAlbumStatus, User, Follow
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from auth_utils import verify_password, get_password_hash, create_access_token, create_refresh_token
 from jose import JWTError, jwt
@@ -243,7 +245,7 @@ async def list_users(
          tags=["Users"],
          description="Get detailed information about a user, including their reviews and statuses."
          )
-async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
+async def get_user(user_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
     result = await db.execute(
         select(User)
         .options(
@@ -256,14 +258,103 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    follow_check = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user_id
+        )
+    )
+    is_following = follow_check.scalar_one_or_none() is not None
+
+    followers_count = (await db.execute(
+        select(func.count()).select_from(Follow).where(Follow.following_id == user_id)
+    )).scalar()
+
+    following_count = (await db.execute(
+        select(func.count()).select_from(Follow).where(Follow.follower_id == user_id)
+    )).scalar()
+
+    mutuals_query = await db.execute(
+        select(User).join(Follow, Follow.follower_id == User.id)
+        .where(Follow.following_id == user_id)   # follows profile user
+        .where(User.id.in_(
+            select(Follow.follower_id).where(Follow.following_id == current_user.id)
+        ))
+    )
+    mutuals = mutuals_query.scalars().all()
+    mutual_followers_count = len(mutuals)
+    mutual_followers_preview = mutuals[:3]  # limit to 3
+
+    user.is_following = is_following
+    user.followers_count = followers_count
+    user.following_count = following_count
+    user.mutual_followers = mutual_followers_preview
+    user.mutual_followers_count = mutual_followers_count
+
     return user
 
-@app.get("/users/by-username/{username}", response_model=UserOut, tags=["Users"])
-async def get_user_by_username(username: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == username))
+@app.get("/users/by-username/{username}",
+         response_model=UserDetailResponse,
+         responses=DEFAULT_ERROR_RESPONSES,
+         tags=["Users"],
+         description="Get detailed user info by username, including reviews, statuses, follow info, and counts."
+         )
+async def get_user_by_username(
+    username: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # Find user by username
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.reviews),
+            selectinload(User.statuses),
+        )
+        .where(User.username == username)
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Check follow status
+    follow_check = await db.execute(
+        select(Follow).where(
+            Follow.follower_id == current_user.id,
+            Follow.following_id == user.id
+        )
+    )
+    is_following = follow_check.scalar_one_or_none() is not None
+
+    # Count followers
+    followers_count = (await db.execute(
+        select(func.count()).select_from(Follow).where(Follow.following_id == user.id)
+    )).scalar()
+
+    # Count following
+    following_count = (await db.execute(
+        select(func.count()).select_from(Follow).where(Follow.follower_id == user.id)
+    )).scalar()
+
+    # Mutual followers
+    mutuals_query = await db.execute(
+        select(User).join(Follow, Follow.follower_id == User.id)
+        .where(Follow.following_id == user.id)
+        .where(User.id.in_(
+            select(Follow.follower_id).where(Follow.following_id == current_user.id)
+        ))
+    )
+    mutuals = mutuals_query.scalars().all()
+    mutual_followers_count = len(mutuals)
+    mutual_followers_preview = mutuals[:3]
+
+    # Attach fields
+    user.is_following = is_following
+    user.followers_count = followers_count
+    user.following_count = following_count
+    user.mutual_followers = mutual_followers_preview
+    user.mutual_followers_count = mutual_followers_count
+
     return user
 
 @app.get("/users/{user_id}/reviews", response_model=PaginatedResponse[ReviewResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
@@ -392,7 +483,7 @@ async def delete_review(
     await db.commit()
     return DeleteResponse(status="deleted", id=review_id)
 
-# User Album Status Endpoints
+# Album Status Endpoints
 
 @app.post("/statuses", response_model=UserAlbumStatusResponse, tags=["Statuses"])
 async def create_status(
@@ -578,3 +669,59 @@ async def refresh_token(refresh_token: str = Body(...)):
 @app.get("/me", response_model=UserOut, responses=DEFAULT_ERROR_RESPONSES, tags=["Auth"])
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+# Follower Endpoints
+
+@app.post("/users/{user_id}/follow")
+async def follow_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You can't follow yourself")
+
+    follow = Follow(follower_id=current_user.id, following_id=user_id)
+    db.add(follow)
+    try:
+        await db.commit()
+    except IntegrityError:
+        raise HTTPException(status_code=400, detail="Already following this user")
+    return {"message": "Followed successfully"}
+
+@app.delete("/users/{user_id}/unfollow")
+async def unfollow_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    query = await db.execute(
+        select(Follow).where(Follow.follower_id == current_user.id, Follow.following_id == user_id)
+    )
+    follow = query.scalar_one_or_none()
+    if not follow:
+        raise HTTPException(status_code=404, detail="Not following this user")
+
+    await db.delete(follow)
+    await db.commit()
+    return {"message": "Unfollowed successfully"}
+
+@app.get("/users/{user_id}/followers", response_model=FollowListResponse)
+async def get_followers(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User).join(Follow, Follow.follower_id == User.id).where(Follow.following_id == user_id)
+    )
+    users = result.scalars().all()
+
+    total = len(users)
+    return {"total": total, "users": users}
+
+@app.get("/users/{user_id}/following", response_model=FollowListResponse)
+async def get_following(user_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User).join(Follow, Follow.following_id == User.id).where(Follow.follower_id == user_id)
+    )
+    users = result.scalars().all()
+
+    total = len(users)
+    return {"total": total, "users": users}

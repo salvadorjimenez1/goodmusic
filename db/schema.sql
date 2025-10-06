@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS user_album_status (
     album_id INT NOT NULL REFERENCES albums(id) ON DELETE CASCADE
 );
 
+-- Following Table
+CREATE TABLE follows (
+    id SERIAL PRIMARY KEY,
+    follower_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    following_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(follower_id, following_id) -- no duplicate follows
+);
+
 -- Indexes
 CREATE INDEX idx_album_title ON albums(title);
 CREATE INDEX idx_user_username ON users(username);

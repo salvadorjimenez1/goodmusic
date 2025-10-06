@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Text, DateTime, func, Float
+from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Text, DateTime, func, Float, UniqueConstraint
 from sqlalchemy.orm import relationship
 from db import Base
 
@@ -46,3 +46,13 @@ class UserAlbumStatus(Base):
     spotify_album_id = Column(String, nullable=False)
 
     user = relationship("User", back_populates="statuses")
+    
+class Follow(Base):
+    __tablename__ = "follows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("follower_id", "following_id", name="unique_follow"),)

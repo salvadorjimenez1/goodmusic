@@ -69,10 +69,30 @@ class UserAlbumStatusUpdate(BaseModel):
     status: Optional[StatusEnum] = None
     is_favorite: Optional[bool] = None
 
+# ---------- FOLLOWS ----------
+class FollowerUser(BaseModel):
+    id: int
+    username: str
+    model_config = ConfigDict(from_attributes=True)
+
+class FollowListResponse(BaseModel):
+    total: int
+    users: list[FollowerUser]
+    
+class MutualFollower(BaseModel):
+    id: int
+    username: str
+    model_config = ConfigDict(from_attributes=True)
+
 # ---------- USER DETAIL RESPONSE ----------
 class UserDetailResponse(UserResponse):
     reviews: list[ReviewResponse] = []
     statuses: list[UserAlbumStatusResponse] = []
+    is_following: Optional[bool] = None
+    followers_count: int = 0
+    following_count: int = 0
+    mutual_followers: list[MutualFollower] = []
+    mutual_followers_count: int = 0  
 
 class UserReviewsResponse(BaseModel):
     reviews: list[ReviewResponse]
