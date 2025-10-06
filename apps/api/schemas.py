@@ -5,10 +5,11 @@ from datetime import datetime
 
 # ---------- USERS ----------
 class UserBase(BaseModel):
-    username: str = Field(..., min_length=3, max_length=30)
+    username: str
 
 class UserCreate(UserBase):
-    password: str = Field(..., min_length=6, max_length=128)
+    password: str
+    confirm_password: str
     
 class UserOut(BaseModel):
     id:int
@@ -27,6 +28,9 @@ class UserResponse(UserBase):
 # ---------- REVIEWS ----------
 class ReviewBase(BaseModel):
     content: str = Field(..., min_length=5, max_length=1000)
+    rating: Optional[float] = Field(
+        None, ge=1.0, le=5.0, multiple_of=0.5
+    ) 
 
 class ReviewCreate(ReviewBase):
     user_id: int
@@ -37,6 +41,9 @@ class ReviewResponse(ReviewBase):
     id: int
     user: Optional[UserResponse] = None
     spotify_album_id: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    user: UserOut
 
 # ---------- USER ALBUM STATUS ----------
 class StatusEnum(str, Enum):

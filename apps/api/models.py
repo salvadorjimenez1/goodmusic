@@ -26,6 +26,7 @@ class Review(Base):
     content = Column(Text, nullable=False)
     rating = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     spotify_album_id = Column(String, nullable=False)

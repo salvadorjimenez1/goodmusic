@@ -31,6 +31,7 @@ from config import SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECR
 import httpx, base64, time
 from datetime import datetime, timedelta
 from fastapi.middleware.cors import CORSMiddleware
+import re
 
 
 DEFAULT_ERROR_RESPONSES = {
@@ -39,6 +40,8 @@ DEFAULT_ERROR_RESPONSES = {
     403: {"model": ErrorResponse},
     404: {"model": ErrorResponse},
 }
+
+USERNAME_REGEX = re.compile(r'^[a-zA-Z0-9._]+$')
 
 
 _spotify_app_token: str | None = None
@@ -112,10 +115,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    # Always emit {"detail": "..."} using your ErrorResponse schema
     return JSONResponse(
         status_code=exc.status_code,
-        content=ErrorResponse(detail=str(exc.detail)).model_dump(),
+        content={"detail": exc.detail},  # don't cast to string
     )
 
 @app.get("/spotify/login", tags=["Spotify"])
@@ -256,6 +258,14 @@ async def get_user(user_id: int, db: AsyncSession = Depends(get_db)):
 
     return user
 
+@app.get("/users/by-username/{username}", response_model=UserOut, tags=["Users"])
+async def get_user_by_username(username: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
 @app.get("/users/{user_id}/reviews", response_model=PaginatedResponse[ReviewResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
 async def get_user_reviews(
     user_id: int,
@@ -272,17 +282,12 @@ async def get_user_reviews(
     # Fetch paginated reviews
     result = await db.execute(
         select(Review)
-        .options(
-            selectinload(Review.album).selectinload(Album.artist),
-            selectinload(Review.user),
-        )
+        .options(selectinload(Review.user))
         .where(Review.user_id == user_id)
         .offset(offset)
         .limit(limit)
     )
     user_reviews = result.scalars().all()
-    if not user_reviews:
-        raise HTTPException(status_code=404, detail="User not found")
 
     return {"total": total, "items": user_reviews}
     
@@ -331,22 +336,42 @@ async def get_all_reviews(review_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Review not found")
     return review
 
+@app.get("/albums/{spotify_album_id}/average-rating", tags=["Albums"])
+async def get_album_average_rating(spotify_album_id: str, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(func.avg(Review.rating)).where(Review.spotify_album_id == spotify_album_id)
+    )
+    avg = result.scalar()
+    return {"average": round(avg, 1) if avg else None}
+
 @app.post("/reviews", response_model=ReviewResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Reviews"])
-async def create_review(
+async def create_or_update_review(
     payload: ReviewCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    user = await db.get(User, payload.user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    review = Review(
-        content=payload.content,
-        user=user,
-        spotify_album_id=payload.spotify_album_id
+    # Check if this user already reviewed this album
+    result = await db.execute(
+        select(Review).where(
+            Review.user_id == current_user.id,
+            Review.spotify_album_id == payload.spotify_album_id
+        )
     )
-    db.add(review)
+    review = result.scalar_one_or_none()
+
+    if review:
+        # Update existing review
+        review.content = payload.content
+        review.rating = payload.rating
+    else:
+        # Create a new review
+        review = Review(
+            content=payload.content,
+            user=current_user,
+            spotify_album_id=payload.spotify_album_id,
+            rating=payload.rating,
+        )
+        db.add(review)
     await db.commit()
     await db.refresh(review)
     return review
@@ -465,13 +490,52 @@ async def delete_status(
 
 @app.post("/register", response_model=UserOut, responses=DEFAULT_ERROR_RESPONSES, tags=["Auth"])
 async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.username == user.username))
+    result = await db.execute(select(User).where(func.lower(User.username) == user.username.lower()))
     existing = result.scalar_one_or_none()
     if existing:
-        raise HTTPException(status_code=400, detail="Username already exists")
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "username"], "msg": "Username not available"}],
+        )
+
+    if len(user.username) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "username"], "msg": "Username must be at least 3 characters"}],
+        )
+        
+    if not USERNAME_REGEX.match(user.username):
+        raise HTTPException(
+        status_code=400,
+        detail=[{"loc": ["body", "username"], "msg": "Username may only contain letters, numbers, periods, or underscores"}],
+    )
+    
+    if len(user.username) > 30:
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "username"], "msg": "Username too long"}],
+        )
+        
+    if len(user.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "password"], "msg": "Password too short (min 6 chars)"}],
+        )
+        
+    if len(user.password) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "password"], "msg": "Password too long"}],
+        )
+        
+    if user.password != user.confirm_password:
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "confirm_password"], "msg": "Passwords do not match"}],
+        )
 
     hashed_pw = get_password_hash(user.password)
-    new_user = User(username=user.username, hashed_password=hashed_pw)
+    new_user = User(username=user.username.lower(), hashed_password=hashed_pw)
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
