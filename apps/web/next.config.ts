@@ -1,10 +1,14 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  /* config options here */
+const nextConfig = {
   images: {
-    remotePatterns: [new URL('https://upload.wikimedia.org/wikipedia/**')],
-  }
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "i.scdn.co",
+      },
+    ],
+  },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
