@@ -1,73 +1,89 @@
-"use client"
+"use client";
 
-import { createContext, useContext, useState, ReactNode } from "react"
+import { createContext, useContext, useState, ReactNode, useEffect } from "react";
+import { apiFetch } from "../lib/api";
+import { useAuth } from "./AuthContext";
 
-type Album = {
-  id: string
-  title: string
-  artist: string
-}
+type Status = "listened" | "want-to-listen";
+
+type UserAlbumStatus = {
+  id: number;
+  spotify_album_id: string;
+  status: Status;
+  is_favorite: boolean;
+  created_at: string;
+  user: { id: number; username: string };
+};
 
 type MusicContextType = {
-  wantToListen: Album[]
-  listened: Album[]
-  addToWantToListen: (album: Album) => void
-  addToListened: (album: Album) => void
-  removeFromWantToListen: (albumId: string) => void;
-  removeFromListened: (albumId: string) => void;
-  removeAlbum: (albumId: string) => void;
-}
+  statuses: UserAlbumStatus[];
+  addStatus: (albumId: string, status: Status, is_favorite?: boolean) => Promise<void>;
+  updateStatus: (
+    statusId: number,
+    payload: { status: Status; is_favorite: boolean }
+  ) => Promise<void>;
+  removeStatus: (statusId: number) => Promise<void>;
+};
 
-const MusicContext = createContext<MusicContextType | undefined>(undefined)
+const MusicContext = createContext<MusicContextType | undefined>(undefined);
 
 export function MusicProvider({ children }: { children: ReactNode }) {
-  const [wantToListen, setWantToListen] = useState<Album[]>([])
-  const [listened, setListened] = useState<Album[]>([])
+  const { user } = useAuth();
+  const [statuses, setStatuses] = useState<UserAlbumStatus[]>([]);
 
-  const addToWantToListen = (album: Album) => {
-     // remove from listened if it's there
-    setListened((prev) => prev.filter((a) => a.id !== album.id))
-    // add if not already in wantToListen
-    if (!wantToListen.find((a) => a.id === album.id)) {
-      setWantToListen((prev) => [...prev, album])
-    }
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const data = await apiFetch(`/users/${user.id}/statuses`);
+      setStatuses(data.items);
+    })();
+  }, [user]);
+
+  async function addStatus(
+    albumId: string,
+    status: Status,
+    is_favorite: boolean = false
+  ) {
+    if (!user) return;
+    const newStatus: UserAlbumStatus = await apiFetch(`/statuses`, {
+      method: "POST",
+      body: JSON.stringify({
+        user_id: user.id,
+        spotify_album_id: albumId,
+        status,
+        is_favorite,
+      }),
+    });
+    setStatuses((prev) => [...prev, newStatus]);
   }
 
-  const addToListened = (album: Album) => {
-    // remove from wantToListen if it's there
-    setWantToListen((prev) => prev.filter((a) => a.id !== album.id))
-    // add if not already in listened
-    if (!listened.find((a) => a.id === album.id)) {
-      setListened((prev) => [...prev, album])
-    }
+  async function updateStatus(
+    statusId: number,
+    payload: { status: Status; is_favorite: boolean }
+  ) {
+    const updated: UserAlbumStatus = await apiFetch(`/statuses/${statusId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+    setStatuses((prev) =>
+      prev.map((s) => (s.id === statusId ? updated : s))
+    );
   }
 
-  const removeFromWantToListen = (albumId: string) => {
-    setWantToListen((prev) => prev.filter((a) => a.id !== albumId));
-  };
-
-  const removeFromListened = (albumId: string) => {
-    setListened((prev) => prev.filter((a) => a.id !== albumId));
-  };
-  
-  const removeAlbum = (albumId: string) => {
-    setWantToListen((prev) => prev.filter((a) => a.id !== albumId));
-    setListened((prev) => prev.filter((a) => a.id !== albumId));
-}
+  async function removeStatus(statusId: number) {
+    await apiFetch(`/statuses/${statusId}`, { method: "DELETE" });
+    setStatuses((prev) => prev.filter((s) => s.id !== statusId));
+  }
 
   return (
-    <MusicContext.Provider
-      value={{ wantToListen, listened, addToWantToListen, addToListened, removeFromWantToListen, removeFromListened, removeAlbum}}
-    >
+    <MusicContext.Provider value={{ statuses, addStatus, updateStatus, removeStatus }}>
       {children}
     </MusicContext.Provider>
-  )
+  );
 }
 
 export function useMusic() {
-  const context = useContext(MusicContext)
-  if (!context) {
-    throw new Error("useMusic must be used within a MusicProvider")
-  }
-  return context
+  const ctx = useContext(MusicContext);
+  if (!ctx) throw new Error("useMusic must be used within MusicProvider");
+  return ctx;
 }
