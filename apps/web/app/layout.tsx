@@ -2,6 +2,7 @@ import "./globals.css"
 import type { Metadata } from "next"
 import Navbar from "../components/ui/Navbar"
 import { MusicProvider } from "../context/MusicContext"
+import { AuthProvider } from "../context/AuthContext";
 
 export const metadata: Metadata = {
   title: "GoodMusic 🎶",
@@ -16,10 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-slate-800 text-gray-900">
-        <MusicProvider>
-        <Navbar />
-        <main className="max-w-4xl mx-auto p-4">{children}</main>
-        </MusicProvider>
+        <AuthProvider>
+          <MusicProvider>
+            <Navbar />
+            <main className="max-w-4xl mx-auto p-4">{children}</main>
+          </MusicProvider>
+        </AuthProvider>
       </body>
     </html>
   )
