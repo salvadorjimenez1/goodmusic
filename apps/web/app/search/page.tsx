@@ -3,60 +3,70 @@
 import { useState } from "react"
 import AlbumCard from "../../components/AlbumCard"
 import SearchBar from "../../components/SearchBar"
+import { apiFetch } from "../../lib/api";
 
-const dummyAlbums = [
-  {
-    id: "blonde",
-    title: "Blonde",
-    artist: "Frank Ocean",
-    coverUrl: "https://upload.wikimedia.org/wikipedia/en/a/a0/Blonde_-_Frank_Ocean.jpeg",
-  },
-  {
-    id: "damn",
-    title: "DAMN.",
-    artist: "Kendrick Lamar",
-    coverUrl: "https://upload.wikimedia.org/wikipedia/en/5/51/Kendrick_Lamar_-_Damn.png",
-  },
-  {
-    id: "tpab",
-    title: "To Pimp a Butterfly",
-    artist: "Kendrick Lamar",
-    coverUrl: "https://upload.wikimedia.org/wikipedia/en/f/f6/Kendrick_Lamar_-_To_Pimp_a_Butterfly.png",
-  },
-  {
-    id: "currents",
-    title: "Currents",
-    artist: "Tame Impala",
-    coverUrl: "https://upload.wikimedia.org/wikipedia/en/9/9b/Tame_Impala_-_Currents.png",
-  },
-]
+type SpotifyAlbum = {
+  id: string;
+  name: string;
+  images: { url: string }[];
+  artists: { name: string }[];
+};
+
+type UiAlbum = {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string;
+};
+
 
 export default function SearchPage() {
-  const [results, setResults] = useState(dummyAlbums)
+  const [results, setResults] = useState<UiAlbum[]>([]);
 
-  const handleSearch = (query: string) => {
-    const filtered = dummyAlbums.filter(
-      (album) =>
-        album.title.toLowerCase().includes(query.toLowerCase()) ||
-        album.artist.toLowerCase().includes(query.toLowerCase())
-    )
-    setResults(filtered)
+  async function handleSearch(query: string) {
+    try {
+      const res = await fetch(`http://localhost:8000/spotify/search?query=${encodeURIComponent(query)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        setResults([]);
+        return;
+      }
+      const data = await res.json();
+      const items: SpotifyAlbum[] = data.albums?.items ?? [];
+
+      const mapped = items.map((a) => ({
+        id: a.id,
+        title: a.name,
+        artist: a.artists?.[0]?.name ?? "Unknown Artist",
+        coverUrl: a.images?.[0]?.url ?? "/placeholder.png",
+      }));
+      setResults(mapped);
+    } catch {
+      setResults([]);
+    }
   }
 
-  return (
+ return (
     <div>
-      <h2 className="text-2xl font-bold mb-4  text-white">Search Albums 🔍</h2>
+      <h2 className="text-2xl font-bold mb-4 text-white">Search Albums 🔍</h2>
       <SearchBar onSearch={handleSearch} />
 
       {results.length === 0 ? (
-        <p className=" text-white">No results found.</p>
+        <p className="text-white">No results found.</p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
           {results.map((album) => (
-            <AlbumCard key={album.id} {...album} />
+            <AlbumCard
+              key={album.id}
+              id={album.id}
+              title={album.title}
+              artist={album.artist}
+              coverUrl={album.coverUrl}
+            />
           ))}
         </div>
       )}
     </div>
-  )
+  );
 }
