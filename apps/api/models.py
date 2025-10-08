@@ -9,6 +9,8 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
 
+    profile_picture = Column(String, nullable=True)  # store image URL or path
+    
     # Relationships
     reviews = relationship("Review", back_populates="user", cascade="all, delete-orphan")
     statuses = relationship("UserAlbumStatus", back_populates="user", cascade="all, delete-orphan")

@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, Body, status, Query, Request, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, Body, status, Query, Request, APIRouter, UploadFile, File
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,20 +8,17 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.exc import IntegrityError
 from schemas import ( 
                      UserCreate, 
-                     UserResponse, 
                      ReviewCreate, 
                      ReviewResponse, 
                      UserAlbumStatusCreate, 
                      UserAlbumStatusResponse, 
                      UserDetailResponse, 
-                     UserReviewsResponse,
                      DeleteResponse,
                      PaginatedResponse,
                      ErrorResponse,
                      UserOut,
                      Token,
                      StatusEnum,
-                     SpotifyAlbumImport,
                      UserAlbumStatusUpdate,
                      FollowListResponse)
 
@@ -34,6 +32,7 @@ import httpx, base64, time
 from datetime import datetime, timedelta
 from fastapi.middleware.cors import CORSMiddleware
 import re
+import os, shutil
 
 
 DEFAULT_ERROR_RESPONSES = {
@@ -44,7 +43,9 @@ DEFAULT_ERROR_RESPONSES = {
 }
 
 USERNAME_REGEX = re.compile(r'^[a-zA-Z0-9._]+$')
+UPLOAD_DIR = "uploads/profile_pics"
 
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 _spotify_app_token: str | None = None
 _spotify_token_expiry: float = 0
@@ -92,6 +93,8 @@ app.add_middleware(
     allow_methods=["*"],  # allow POST, GET, OPTIONS, etc.
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
@@ -222,7 +225,7 @@ async def ping_db(db: AsyncSession = Depends(get_db)):
         return {"status": "error", "detail": str(e)}
 
 # User Endpoints
-@app.get("/users", response_model=PaginatedResponse[UserResponse], responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
+@app.get("/users", response_model=PaginatedResponse[UserOut], responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
 async def list_users(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(10, ge=1, le=100, description="Number of users per page"),
@@ -381,6 +384,39 @@ async def get_user_reviews(
     user_reviews = result.scalars().all()
 
     return {"total": total, "items": user_reviews}
+
+@app.post("/users/{user_id}/profile-picture")
+async def upload_profile_picture(
+    user_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    save_path = os.path.join(UPLOAD_DIR, f"user_{user_id}_{file.filename}")
+
+    # Save file to disk
+    with open(save_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # Build a public URL (what we store in DB)
+    file_url = f"/uploads/profile_pics/user_{user_id}_{file.filename}"
+
+    # Update DB ORM-style
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.profile_picture = file_url
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return {"message": "Profile picture updated", "profile_picture": file_url}
     
 @app.delete("/users/{user_id}", response_model=DeleteResponse, responses=DEFAULT_ERROR_RESPONSES, tags=["Users"])
 async def delete_user(user_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
