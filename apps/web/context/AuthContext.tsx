@@ -11,7 +11,7 @@ type User = {
 type AuthContextType = {
   user: User | null;
   login: (username: string, password: string) => Promise<void>;
-  register: (username: string, password: string, confirmPassword: string) => Promise<void>;
+  register: (username: string, email: string, password: string, confirmPassword: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -26,8 +26,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ username, password }),
     });
-    if (!res.ok) throw new Error("Invalid username or password");
-    const data = await res.json();
+    
+    const data = await res.json().catch(() => ({}));
+
+    if (!res.ok) {
+      if (data.detail === "Email not verified") {
+        throw new Error("Please verify your email before logging in.");
+      }
+      throw new Error("Invalid username or password");
+    }
 
     localStorage.setItem("access_token", data.access_token);
     localStorage.setItem("refresh_token", data.refresh_token);
@@ -37,20 +44,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }
 
-async function register(username: string, password: string, confirmPassword: string) {
+async function register(username: string, email: string, password: string, confirmPassword: string) {
   const res = await fetch("http://localhost:8000/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password, confirm_password: confirmPassword }),
+    body: JSON.stringify({ username, email, password, confirm_password: confirmPassword }),
   });
 
-  if (!res.ok) {
-    // instead of throwing the raw response, throw the parsed JSON
-    const data = await res.json().catch(() => ({}));
-    throw data;
-  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw data;
 
-  await login(username, password);
+  return data;
 }
 
   function logout() {

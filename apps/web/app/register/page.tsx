@@ -9,6 +9,7 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState(""); 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -18,13 +19,18 @@ export default function RegisterPage() {
     confirm_password?: string;
   }>({});
 
+  function isValidEmail(value: string) {
+    const emailRegex = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$/;
+    return emailRegex.test(value);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrors({}); // reset
 
     try {
-      await register(username, password, confirmPassword);
-      router.push(`/profile/${username}`);
+      await register(username, email, password, confirmPassword);
+      router.push("/login?registered=1");
     } catch (err: any) {
   const newErrors: { username?: string; password?: string; confirm_password?: string } = {};
 
@@ -75,6 +81,17 @@ export default function RegisterPage() {
             <p className="mt-1 text-sm text-red-400">{errors.username}</p>
           )}
         </div>
+
+        <div>
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className={`w-full p-2 rounded bg-gray-700 text-white border ${email && !isValidEmail(email) ? "border-red-500" : ""}`}
+            required
+          />
+          </div>
 
         {/* Password */}
         <div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../context/AuthContext";
 
 export default function LoginPage() {
@@ -11,6 +11,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const searchParams = useSearchParams();
+  const registered = searchParams.get("registered");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,6 +37,12 @@ export default function LoginPage() {
   return (
     <div className="max-w-md mx-auto mt-10 text-white">
       <h1 className="text-2xl mb-4">Login</h1>
+      
+      {registered && (
+        <p className="text-green-600 font-medium">
+          Registration successful! Please verify your email before logging in.
+        </p>
+      )}
 
         {/* Inline error banner */}
       {error && (
@@ -93,11 +101,6 @@ export default function LoginPage() {
           Login
         </button>
       </form>
-      <a href="http://localhost:8000/spotify/login">
-      <button className="px-4 py-2 bg-green-600 text-white rounded">
-            Connect Spotify
-            </button>
-            </a>
     </div>
   );
 }
