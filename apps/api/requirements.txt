@@ -9,3 +9,6 @@ passlib[bcrypt]
 python-multipart
 bcrypt<4
 httpx
+python-dotenv
+aiosmtplib
+pydantic[email]

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, EmailStr
 from typing import Optional, Generic, TypeVar
 from enum import Enum
 from datetime import datetime
@@ -10,12 +10,15 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    email: EmailStr
     confirm_password: str
 
 class UserOut(BaseModel):
     id: int
     username: str
     profile_picture: Optional[str] = None
+    email: EmailStr
+    is_verified: bool
     model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):

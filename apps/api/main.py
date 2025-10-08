@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, Body, status, Query, Request, APIRouter, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select, func
@@ -27,12 +27,14 @@ from models import Review, UserAlbumStatus, User, Follow
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from auth_utils import verify_password, get_password_hash, create_access_token, create_refresh_token
 from jose import JWTError, jwt
-from config import SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI
+from config import SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, MAIL_USERNAME, MAIL_PASSWORD, MAIL_PORT, MAIL_SERVER
 import httpx, base64, time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.middleware.cors import CORSMiddleware
 import re
 import os, shutil
+import aiosmtplib
+from email.mime.text import MIMEText
 
 
 DEFAULT_ERROR_RESPONSES = {
@@ -76,6 +78,33 @@ async def get_spotify_app_token() -> str:
     _spotify_token_expiry = time.time() + data["expires_in"] - 60  # renew 1m early
     return _spotify_app_token
 
+async def send_verification_email(email: str, token: str):
+    # Build the verification link
+    link = f"http://localhost:3000/verify?token={token}"  # later replace with FRONTEND_URL
+    body = f"""
+    🎶 Welcome to GoodMusic!
+
+    Please verify your account by clicking this link:
+    {link}
+
+    If you didn’t sign up, you can ignore this email.
+    """
+
+    # Construct MIME email
+    msg = MIMEText(body, "plain")
+    msg["From"] = MAIL_USERNAME
+    msg["To"] = email
+    msg["Subject"] = "Verify your GoodMusic account"
+
+    # Send via SMTP
+    await aiosmtplib.send(
+        msg,
+        hostname=MAIL_SERVER,
+        port=MAIL_PORT,
+        username=MAIL_USERNAME,
+        password=MAIL_PASSWORD,
+        start_tls=True
+    )
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -117,6 +146,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     if user is None:
         raise credentials_exception
     return user
+
+def create_verification_token(user_id: int):
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    to_encode = {"sub": str(user_id), "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -660,13 +694,55 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
             status_code=400,
             detail=[{"loc": ["body", "confirm_password"], "msg": "Passwords do not match"}],
         )
+    
+    email_check = await db.execute(select(User).where(func.lower(User.email) == user.email.lower()))
+    if email_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=[{"loc": ["body", "email"], "msg": "Email already registered"}],
+        )
 
     hashed_pw = get_password_hash(user.password)
-    new_user = User(username=user.username.lower(), hashed_password=hashed_pw)
+    new_user = User(username=user.username.lower(),
+                    email=user.email.lower(),
+                    hashed_password=hashed_pw,
+                    is_verified=False)
+    
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
+    
+    token = create_verification_token(new_user.id)
+    await send_verification_email(new_user.email, token)
+    
     return new_user
+
+@app.get("/verify", tags=["Auth"])
+async def verify_email(token: str, db: AsyncSession = Depends(get_db)):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if not user_id:
+            return {"status": "invalid"}
+
+        user = await db.get(User, int(user_id))
+        if not user:
+            return {"status": "invalid"}
+
+        if user.is_verified:
+            return {"status": "already_verified"}
+
+        user.is_verified = True
+        db.add(user)
+        await db.commit()
+        return {"status": "success"}
+
+    except jwt.ExpiredSignatureError:
+        return {"status": "expired"}
+    except JWTError:
+        return {"status": "invalid"}
+    except Exception:
+        return {"status": "error"}
 
 @app.post(
     "/login",
@@ -678,8 +754,12 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == form_data.username))
     db_user = result.scalar_one_or_none()
+    
     if not db_user or not verify_password(form_data.password, db_user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    if not db_user.is_verified:
+        raise HTTPException(status_code=403, detail="Email not verified")
 
     access_token = create_access_token(data={"sub": db_user.username})
     refresh_token = create_refresh_token(data={"sub": db_user.username})
