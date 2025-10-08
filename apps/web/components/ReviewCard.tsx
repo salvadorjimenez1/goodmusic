@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api";
 import { Star } from "lucide-react";
 import Link from "next/link";
+import UserAvatar from "./UserAvatar";
 
 interface Props {
   username: string;
+  profilePicture?: string | null;
   rating: number | null;
   comment: string;
   spotify_album_id: string;
@@ -13,7 +15,7 @@ interface Props {
   context?: "album" | "profile";
 }
 
-export default function ReviewCard({ username, rating, comment, spotify_album_id, created_at, updated_at, context = "profile"}: Props) {
+export default function ReviewCard({ username, profilePicture, rating, comment, spotify_album_id, created_at, updated_at, context = "profile"}: Props) {
   const [album, setAlbum] = useState<any>(null);
 
   useEffect(() => {
@@ -49,7 +51,7 @@ export default function ReviewCard({ username, rating, comment, spotify_album_id
   }
 
   return (
-   <div className="bg-gray-800 p-4 rounded-lg shadow-md text-white flex gap-4">
+   <div className="border-b border-gray-700 py-5">
       {context === "profile" && album && (
         <Link href={`/album/${spotify_album_id}`}>
           <img
@@ -62,14 +64,15 @@ export default function ReviewCard({ username, rating, comment, spotify_album_id
 
       <div className="flex-1">
         {context === "album" ? (
-        <h3 className="text-lg font-semibold">
+        <h3 className="text-lg font-semibold flex items-center gap-3">
           <Link
             href={`/profile/${username}`}
-            className="text-indigo-300 hover:underline hover:text-indigo-400"
+            className="flex items-center text-lg text-indigo-300 hover:underline hover:text-indigo-400 gap-3"
           >
+            <UserAvatar username={username} profilePicture={profilePicture} size={40} />
             {username}
           </Link>{" "}
-          <span className="text-gray-400">reviewed this album</span>
+          <span className="text-lg text-gray-400">reviewed this album</span>
         </h3>
       ) : (
           <h3 className="text-lg font-semibold">
@@ -83,19 +86,23 @@ export default function ReviewCard({ username, rating, comment, spotify_album_id
           </h3>
         )}
 
-        {/* Rating + date */}
+        {/* Rating */}
+        <div className="mt-2">
           {rating ? <span className="flex">{renderStars(rating)}</span> : <span>No rating</span>}
-          <span>
-            {new Date(created_at).toLocaleDateString()}
-            {updated_at && updated_at !== created_at && (
-              <span className="italic text-gray-500 ml-1">
-                (edited {new Date(updated_at).toLocaleDateString()})
-              </span>
-            )}
-          </span>
+        </div>
+
+        {/* Date */}
+        <div className="mt-2 text-sm text-gray-400">
+          {new Date(created_at).toLocaleDateString()}
+          {updated_at && updated_at !== created_at && (
+            <span className="italic text-gray-500 ml-1">
+              (edited {new Date(updated_at).toLocaleDateString()})
+            </span>
+          )}
+          </div>
 
         {/* Review text */}
-        <p className="text-gray-200">{comment}</p>
+        <p className="text-gray-200 text-lg mt-3">{comment}</p>
       </div>
     </div>
   );

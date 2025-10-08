@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "../../../context/AuthContext";
 import { apiFetch } from "../../../lib/api";
 import AlbumCard from "../../../components/AlbumCard";
 import ReviewCard from "../../../components/ReviewCard";
 import Modal from "../../../components/Modal";
-import Link from "next/link";
+import UserAvatar from "../../../components/UserAvatar";
 
 type SpotifyAlbum = {
   id: string;
@@ -32,6 +33,7 @@ export default function ProfilePage() {
 
   const [showFollowersModal, setShowFollowersModal] = useState(false);
   const [showFollowingModal, setShowFollowingModal] = useState(false);
+  const [showAvatarModal, setShowAvatarModal] = useState(false);
 
   const isOwnProfile = loggedInUser?.username === profileUser?.username;
 
@@ -106,7 +108,7 @@ export default function ProfilePage() {
     }
   }, [activeTab, profileUser]);
 
-  // Fetch followers when modal opens
+  // Load followers/following
   useEffect(() => {
     if (showFollowersModal && profileUser) {
       (async () => {
@@ -116,7 +118,6 @@ export default function ProfilePage() {
     }
   }, [showFollowersModal, profileUser]);
 
-  // Fetch following when modal opens
   useEffect(() => {
     if (showFollowingModal && profileUser) {
       (async () => {
@@ -130,7 +131,6 @@ export default function ProfilePage() {
     return <p className="text-white">Loading profile...</p>;
   }
 
-  // Filter albums by tab
   const filteredAlbums = albums.filter((a) => {
     if (activeTab === "want") return a.status === "want-to-listen";
     if (activeTab === "listened") return a.status === "listened";
@@ -138,7 +138,29 @@ export default function ProfilePage() {
     return false;
   });
 
-  // Follow/Unfollow
+  // Upload profile picture when avatar clicked
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    await fetch(
+      `${process.env.NEXT_PUBLIC_API_URL}/users/${profileUser.id}/profile-picture`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("access_token") || ""}`,
+        },
+        body: formData,
+      }
+    );
+
+    const updated = await apiFetch(`/users/by-username/${profileUser.username}`);
+    setProfileUser(updated);
+  };
+
   const toggleFollow = async () => {
     const action = profileUser.is_following ? "unfollow" : "follow";
     await apiFetch(`/users/${profileUser.id}/${action}`, {
@@ -156,43 +178,98 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-4xl mx-auto mt-8 text-white">
-      <h1 className="text-3xl font-bold mb-2">
-        {isOwnProfile ? "My Music Shelf" : `${profileUser.username}’s Music Shelf`}
+      {/* Avatar (clickable to upload if own profile) */}
+      <div className="relative inline-block">
+        {isOwnProfile ? (
+          <label htmlFor="profilePicInput" className="cursor-pointer">
+            <UserAvatar
+              username={profileUser.username}
+              profilePicture={profileUser.profile_picture}
+              size={140}
+              editable={true}
+            />
+          </label>
+        ) : (
+          <UserAvatar
+            username={profileUser.username}
+            profilePicture={profileUser.profile_picture}
+            size={140}
+            onClick={() => setShowAvatarModal(true)} // 👈 open enlarge modal
+          />
+        )}
+
+        {isOwnProfile && (
+          <input
+            id="profilePicInput"
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleFileChange}
+          />
+        )}
+      </div>
+
+      {/* Avatar Enlarge Modal */}
+      <Modal
+        isOpen={showAvatarModal}
+        onClose={() => setShowAvatarModal(false)}
+        noScroll
+        bare
+      >
+        <div className="flex justify-center items-center">
+          <div
+            className="rounded-full overflow-hidden bg-black"
+            style={{
+              width: "min(40vw, 40vh)",
+              height: "min(40vw, 40vh)",
+            }}
+          >
+            <img
+              src={
+                profileUser.profile_picture
+                  ? process.env.NEXT_PUBLIC_API_URL + profileUser.profile_picture
+                  : "/default-avatar.png"
+              }
+              alt={profileUser.username}
+              className="w-full h-full object-cover"
+            />
+          </div>
+        </div>
+      </Modal>
+
+      <h1 className="text-3xl font-bold mt-3">
+        {isOwnProfile ? `${profileUser.username}` : `${profileUser.username}’s Music Shelf`}
       </h1>
 
-      {/* Followers/Following */}
+      {/* Followers / Following counts */}
       <div className="mb-4 flex gap-6">
-        <button
-          onClick={() => setShowFollowersModal(true)}
-          className="hover:underline"
-        >
+        <button onClick={() => setShowFollowersModal(true)} className="hover:underline">
           <strong>{profileUser.followers_count}</strong> Followers
         </button>
-        <button
-          onClick={() => setShowFollowingModal(true)}
-          className="hover:underline"
-        >
+        <button onClick={() => setShowFollowingModal(true)} className="hover:underline">
           <strong>{profileUser.following_count}</strong> Following
         </button>
       </div>
 
-      {/* Mutuals */}
-      {profileUser.mutual_followers?.length > 0 && (
-        <p className="text-sm text-gray-400 mt-1">
-          Followed by{" "}
-          {profileUser.mutual_followers.map((u: any, i: number) => (
-            <span key={u.id}>
-              {u.username}
-              {i < profileUser.mutual_followers.length - 1 ? ", " : ""}
-            </span>
+      {/* Mutual followers with avatars */}
+      {!isOwnProfile && profileUser.mutual_followers?.length > 0 && (
+        <div className="flex items-center gap-2 mt-2">
+          {profileUser.mutual_followers.map((u: any) => (
+            <Link
+              key={u.id}
+              href={`/profile/${u.username}`}
+              className="flex items-center gap-1"
+            >
+              <UserAvatar username={u.username} profilePicture={u.profile_picture} size={20} />
+              <span className="text-sm hover:underline">{u.username}</span>
+            </Link>
           ))}
-          {profileUser.mutual_followers_count >
-            profileUser.mutual_followers.length &&
-            ` + ${
-              profileUser.mutual_followers_count -
-              profileUser.mutual_followers.length
-            } more`}
-        </p>
+          {profileUser.mutual_followers_count > profileUser.mutual_followers.length && (
+            <span className="text-sm text-gray-400">
+              + {profileUser.mutual_followers_count - profileUser.mutual_followers.length} more
+            </span>
+          )}
+        </div>
       )}
 
       {/* Follow/Unfollow button */}
@@ -200,60 +277,60 @@ export default function ProfilePage() {
         <button
           onClick={toggleFollow}
           className={`mt-2 px-4 py-2 rounded font-medium ${
-            profileUser.is_following
-              ? "bg-gray-700 text-white"
-              : "bg-indigo-500 text-white"
+            profileUser.is_following ? "bg-gray-700 text-white" : "bg-indigo-500 text-white"
           }`}
         >
           {profileUser.is_following ? "Unfollow" : "Follow"}
         </button>
       )}
 
-        {/* Followers Modal */}
-        <Modal
-          isOpen={showFollowersModal}
-          onClose={() => setShowFollowersModal(false)}
-          title="Followers"
-        >
-          {followers.length > 0 ? (
-            followers.map((u: any) => (
-              <div key={u.id} className="flex items-center gap-3">
-                <Link
-                  href={`/profile/${u.username}`}
-                  className="font-medium hover:underline"
-                  onClick={() => setShowFollowersModal(false)}
-                >
-                  {u.username}
-                </Link>
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-400">No followers yet.</p>
-          )}
-        </Modal>
+      {/* Followers Modal */}
+      <Modal
+        isOpen={showFollowersModal}
+        onClose={() => setShowFollowersModal(false)}
+        title="Followers"
+      >
+        {followers.length > 0 ? (
+          followers.map((u: any) => (
+            <div key={u.id} className="flex items-center gap-3">
+              <Link
+                href={`/profile/${u.username}`}
+                className="flex items-center font-medium hover:underline gap-3"
+                onClick={() => setShowFollowersModal(false)}
+              >
+                <UserAvatar username={u.username} profilePicture={u.profile_picture} size={32} />
+                {u.username}
+              </Link>
+            </div>
+          ))
+        ) : (
+          <p className="text-gray-400">No followers yet.</p>
+        )}
+      </Modal>
 
-        {/* Following Modal */}
-        <Modal
-          isOpen={showFollowingModal}
-          onClose={() => setShowFollowingModal(false)}
-          title="Following"
-        >
-          {following.length > 0 ? (
-            following.map((u: any) => (
-              <div key={u.id} className="flex items-center gap-3">
-                <Link
-                  href={`/profile/${u.username}`}
-                  className="font-medium hover:underline text-xl"
-                  onClick={() => setShowFollowingModal(false)}
-                >
-                  {u.username}
-                </Link>
-              </div>
-            ))
-          ) : (
-            <p className="text-gray-400">Not following anyone yet.</p>
-          )}
-        </Modal>
+      {/* Following Modal */}
+      <Modal
+        isOpen={showFollowingModal}
+        onClose={() => setShowFollowingModal(false)}
+        title="Following"
+      >
+        {following.length > 0 ? (
+          following.map((u: any) => (
+            <div key={u.id} className="flex items-center gap-3">
+              <Link
+                href={`/profile/${u.username}`}
+                className="flex items-center gap-3 font-medium hover:underline"
+                onClick={() => setShowFollowingModal(false)}
+              >
+                <UserAvatar username={u.username} profilePicture={u.profile_picture} size={32} />
+                {u.username}
+              </Link>
+            </div>
+          ))
+        ) : (
+          <p className="text-gray-400">Not following anyone yet.</p>
+        )}
+      </Modal>
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-gray-700 my-6">
@@ -284,6 +361,7 @@ export default function ProfilePage() {
               <ReviewCard
                 key={r.id}
                 username={r.user.username}
+                profilePicture={r.user.profile_picture}
                 rating={r.rating}
                 comment={r.content}
                 spotify_album_id={r.spotify_album_id}

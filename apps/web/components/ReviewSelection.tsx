@@ -164,6 +164,7 @@ function StarRating({
          <ReviewCard
           key={r.id}
           username={r.user.username}
+          profilePicture={r.user.profile_picture}
           rating={r.rating}
           comment={r.content}
           spotify_album_id={r.spotify_album_id}
