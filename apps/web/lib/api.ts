@@ -1,37 +1,29 @@
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const token = localStorage.getItem("access_token");
-
-  let res = await fetch(`${baseUrl}${path}`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      Authorization: `Bearer ${localStorage.getItem("access_token") || ""}`,
       ...options.headers,
     },
   });
 
-  // If token expired → try refresh
-  if (res.status === 401) {
-    const refreshed = await refreshAccessToken();
-    if (refreshed) {
-      res = await fetch(`${baseUrl}${path}`, {
-        ...options,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${refreshed}`,
-          ...options.headers,
-        },
-      });
-    }
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
   }
 
   if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw errorData;
+    throw {
+      status: res.status,
+      message: data?.detail || res.statusText,
+      body: data,
+    };
   }
 
-  return res.json();
+  return data;
 }
 
 async function refreshAccessToken(): Promise<string | null> {

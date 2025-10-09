@@ -43,16 +43,25 @@ export default function ProfilePage() {
       try {
         const data = await apiFetch(`/users/by-username/${username}`);
         setProfileUser(data);
-      } catch (err) {
-        console.error("Failed to fetch profile", err);
-        setProfileUser(null);
+      } catch (err: any) {
+        // If apiFetch attaches status, use it
+        const status = err?.status || err?.response?.status;
+
+        if (status === 401) {
+          setProfileUser({ error: "unauthorized" });
+        } else if (status === 404) {
+          setProfileUser({ error: "notfound" });
+        } else {
+          console.error("Failed to fetch profile", err);
+          setProfileUser({ error: "notfound" });
+        }
       }
     })();
   }, [username]);
 
   // Load statuses for this profile
   useEffect(() => {
-    if (!profileUser) return;
+    if (!profileUser || profileUser.error) return; // ✅ skip on error
     (async () => {
       try {
         const res = await apiFetch(`/users/${profileUser.id}/statuses`);
@@ -93,24 +102,23 @@ export default function ProfilePage() {
 
   // Load reviews when Reviews tab is active
   useEffect(() => {
-    if (activeTab === "reviews" && profileUser) {
-      (async () => {
-        try {
-          const data = await apiFetch(
-            `/users/${profileUser.id}/reviews?limit=50&offset=0`
-          );
-          setReviews(data.items || []);
-        } catch (err) {
-          console.error("Failed to fetch reviews", err);
-          setReviews([]);
-        }
-      })();
-    }
+    if (activeTab !== "reviews" || !profileUser || profileUser.error) return; // ✅ skip on error
+    (async () => {
+      try {
+        const data = await apiFetch(
+          `/users/${profileUser.id}/reviews?limit=50&offset=0`
+        );
+        setReviews(data.items || []);
+      } catch (err) {
+        console.error("Failed to fetch reviews", err);
+        setReviews([]);
+      }
+    })();
   }, [activeTab, profileUser]);
 
   // Load followers/following
   useEffect(() => {
-    if (showFollowersModal && profileUser) {
+    if (showFollowersModal && profileUser && !profileUser.error) {
       (async () => {
         const res = await apiFetch(`/users/${profileUser.id}/followers`);
         setFollowers(res.users || []);
@@ -119,7 +127,7 @@ export default function ProfilePage() {
   }, [showFollowersModal, profileUser]);
 
   useEffect(() => {
-    if (showFollowingModal && profileUser) {
+    if (showFollowingModal && profileUser && !profileUser.error) {
       (async () => {
         const res = await apiFetch(`/users/${profileUser.id}/following`);
         setFollowing(res.users || []);
@@ -131,6 +139,21 @@ export default function ProfilePage() {
     return <p className="text-white">Loading profile...</p>;
   }
 
+  if (profileUser.error === "unauthorized") {
+    return (
+      <p className="text-gray-400">
+        Log in to see this user’s account.
+      </p>
+    );
+  }
+
+  if (profileUser.error === "notfound") {
+    return (
+      <p className="text-gray-400">
+        This profile could not be found.
+      </p>
+    );
+  }
   const filteredAlbums = albums.filter((a) => {
     if (activeTab === "want") return a.status === "want-to-listen";
     if (activeTab === "listened") return a.status === "listened";
