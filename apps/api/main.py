@@ -264,15 +264,21 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
     limit: int = Query(10, ge=1, le=100, description="Number of users per page"),
     offset: int = Query(0, ge=0, description="How many users to skip"),
-    ):
-    # Count total users
-    total_result = await db.execute(select(func.count()).select_from(User))
+    q: str | None = Query(None, description="Optional search term to filter by username"),
+):
+    # Base query
+    query = select(User)
+
+    # If search term provided, filter by username
+    if q:
+        query = query.where(User.username.ilike(f"%{q}%"))
+
+    # Count total for pagination (after filtering)
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar()
-    
-    result = await db.execute(
-        select(User)
-        .offset(offset)
-        .limit(limit))
+
+    # Apply pagination
+    result = await db.execute(query.offset(offset).limit(limit))
     users = result.scalars().all()
     return {"total": total, "items": users}
     
