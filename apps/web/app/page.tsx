@@ -5,6 +5,7 @@ import Link from "next/link";
 type SpotifyAlbum = {
   id: string;
   name: string;
+  release_date: string; 
   images: { url: string }[];
   artists: { name: string }[];
 };
@@ -16,15 +17,20 @@ type UiAlbum = {
   coverUrl: string;
 };
 
-async function getAlbums(query: string = "frank ocean"): Promise<UiAlbum[]> {
+async function getAlbums(): Promise<UiAlbum[]> {
   try {
-    const res = await fetch(`http://localhost:8000/spotify/search?query=${encodeURIComponent(query)}`, {
+    const currentYear = new Date().getFullYear();
+    const res = await fetch(`http://localhost:8000/spotify/search?query=year:${currentYear}`, {
       cache: "no-store",
     });
     if (!res.ok) return [];
     const data = await res.json();
-    // Spotify search returns { albums: { items: [] } }
     const items: SpotifyAlbum[] = data.albums?.items ?? [];
+
+    // Sort by release_date (newest → oldest)
+    items.sort(
+      (a, b) => new Date(b.release_date).getTime() - new Date(a.release_date).getTime()
+    );
 
     return items.map((a) => ({
       id: a.id,
@@ -43,7 +49,7 @@ export default async function HomePage() {
 
   return (
     <div>
-      <h2 className="text-2xl font-bold mb-6 text-white">Trending Albums 🎵</h2>
+      <h2 className="text-2xl font-bold mb-6 text-white">Latest Album Releases 🎵</h2>
 
       {albums.length === 0 ? (
         <p className="text-gray-400">No albums found.</p>
