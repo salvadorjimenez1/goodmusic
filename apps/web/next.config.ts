@@ -18,6 +18,10 @@ const nextConfig = {
         hostname: "your-production-domain.com", // <-- change this deploying
         pathname: "/uploads/**",
       },
+         {
+        protocol: "https",
+        hostname: "ui-avatars.com",
+      },
     ],
   },
 };

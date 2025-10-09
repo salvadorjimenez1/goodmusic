@@ -217,23 +217,11 @@ export default function ProfilePage() {
         bare
       >
         <div className="flex justify-center items-center">
-          <div
-            className="rounded-full overflow-hidden bg-black"
-            style={{
-              width: "min(40vw, 40vh)",
-              height: "min(40vw, 40vh)",
-            }}
-          >
-            <img
-              src={
-                profileUser.profile_picture
-                  ? process.env.NEXT_PUBLIC_API_URL + profileUser.profile_picture
-                  : "/default-avatar.png"
-              }
-              alt={profileUser.username}
-              className="w-full h-full object-cover"
-            />
-          </div>
+          <UserAvatar
+            username={profileUser.username}
+            profilePicture={profileUser.profile_picture}
+            size={300}
+          />
         </div>
       </Modal>
 
@@ -258,7 +246,7 @@ export default function ProfilePage() {
             <Link
               key={u.id}
               href={`/profile/${u.username}`}
-              className="flex items-center gap-1"
+              className="flex items-center gap-2"
             >
               <UserAvatar username={u.username} profilePicture={u.profile_picture} size={20} />
               <span className="text-sm hover:underline">{u.username}</span>
