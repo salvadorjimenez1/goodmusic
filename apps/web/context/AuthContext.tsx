@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { apiFetch } from "../lib/api";
 
 type User = {
@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ username, password }),
     });
-    
+
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
@@ -44,24 +44,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }
 
-async function register(username: string, email: string, password: string, confirmPassword: string) {
-  const res = await fetch("http://localhost:8000/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password, confirm_password: confirmPassword }),
-  });
+  async function register(username: string, email: string, password: string, confirmPassword: string) {
+    const res = await fetch("http://localhost:8000/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, email, password, confirm_password: confirmPassword }),
+    });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw data;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw data;
 
-  return data;
-}
+    return data;
+  }
 
   function logout() {
     localStorage.removeItem("access_token");
     localStorage.removeItem("refresh_token");
     setUser(null);
   }
+
+  // ✅ Rehydrate user on page reload
+  useEffect(() => {
+    async function init() {
+      const token = localStorage.getItem("access_token");
+      if (!token) return;
+
+      try {
+        const me = await apiFetch("/me");
+        setUser(me);
+      } catch {
+        logout();
+      }
+    }
+    init();
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, login, register, logout }}>
