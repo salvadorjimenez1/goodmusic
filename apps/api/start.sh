@@ -21,9 +21,10 @@ until alembic upgrade head; do
   sleep 2
 done
 
-printf '%s
-' "running seed data loader..."
-python -m seed
+if [ "${SEED_DATA:-false}" = "true" ]; then
+  echo "running seed data loader..."
+  python -m seed
+fi
 
 printf '%s
 ' "Starting API server..."

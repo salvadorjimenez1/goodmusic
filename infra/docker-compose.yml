@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:15
@@ -26,7 +24,8 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/albumreviews
+      SEED_DATA: "false" # change to true if running locally
+      DATABASE_URL: ${DATABASE_URL}
     volumes:
       - ../apps/api:/app
 
