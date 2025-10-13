@@ -12,3 +12,4 @@ httpx
 python-dotenv
 aiosmtplib
 pydantic[email]
+boto3

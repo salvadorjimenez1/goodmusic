@@ -27,7 +27,10 @@ from models import Review, UserAlbumStatus, User, Follow
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from auth_utils import verify_password, get_password_hash, create_access_token, create_refresh_token
 from jose import JWTError, jwt
-from config import SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, MAIL_USERNAME, MAIL_PASSWORD, MAIL_PORT, MAIL_SERVER
+from config import (SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, 
+                    SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, 
+                    MAIL_USERNAME, MAIL_PASSWORD, MAIL_PORT, MAIL_SERVER, CORS_ORIGINS,
+                     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_NAME)
 import httpx, base64, time
 from datetime import datetime, timedelta, timezone
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +38,18 @@ import re
 import os, shutil
 import aiosmtplib
 from email.mime.text import MIMEText
+import boto3
+from uuid import uuid4
 
+
+
+
+s3 = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION,
+)
 
 DEFAULT_ERROR_RESPONSES = {
     400: {"model": ErrorResponse},
@@ -117,7 +131,7 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # your frontend URL
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],  # allow POST, GET, OPTIONS, etc.
     allow_headers=["*"],
@@ -435,17 +449,25 @@ async def upload_profile_picture(
     if user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    save_path = os.path.join(UPLOAD_DIR, f"user_{user_id}_{file.filename}")
+    # Generate unique key
+    file_ext = file.filename.split(".")[-1]
+    key = f"profile_pics/user_{user_id}_{uuid4()}.{file_ext}"
 
-    # Save file to disk
-    with open(save_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    try:
+        s3.upload_fileobj(
+            file.file,
+            S3_BUCKET_NAME,
+            key,
+            ExtraArgs={"ContentType": file.content_type}
+        )
+    except Exception as e:
+        print("S3 Upload Error:", str(e))
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-    # Build a public URL (what we store in DB)
-    file_url = f"/uploads/profile_pics/user_{user_id}_{file.filename}"
+    # Build S3 URL
+    file_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
 
-    # Update DB ORM-style
+    # Update DB
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -709,11 +731,14 @@ async def register(user: UserCreate, db: AsyncSession = Depends(get_db)):
         )
 
     hashed_pw = get_password_hash(user.password)
-    new_user = User(username=user.username.lower(),
-                    email=user.email.lower(),
-                    hashed_password=hashed_pw,
-                    is_verified=False)
-    
+    new_user = User(
+        username=user.username.lower(),
+            email=user.email.lower(),
+            hashed_password=hashed_pw,
+            is_verified=False,
+            profile_picture=f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/profile_pics/default.png"
+        )
+
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)

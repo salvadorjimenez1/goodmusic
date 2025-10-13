@@ -22,6 +22,11 @@ const nextConfig = {
         protocol: "https",
         hostname: "ui-avatars.com",
       },
+      {
+        protocol: "https",
+        hostname: "goodmusic-profile-pics.s3.us-east-1.amazonaws.com",
+      },
+      
     ],
   },
 };
