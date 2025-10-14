@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function VerifyPage() {
   const searchParams = useSearchParams();
@@ -10,7 +11,7 @@ export default function VerifyPage() {
 
 useEffect(() => {
   if (token) {
-    fetch(`http://localhost:8000/verify?token=${token}`)
+    fetch(`${API_BASE_URL}/verify?token=${token}`)
       .then(async res => {
         const data = await res.json().catch(() => ({}));
         setStatus(data.status || "error");

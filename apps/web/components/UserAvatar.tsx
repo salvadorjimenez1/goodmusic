@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { Camera } from "lucide-react";
 import { useInitialsAvatar } from "./useInitialsAvatar";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function UserAvatar({
   username,
@@ -15,13 +16,12 @@ export default function UserAvatar({
   editable?: boolean;
   onClick?: () => void;
 }) {
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const initialsUrl = useInitialsAvatar(username, size);
 
   const src = profilePicture
     ? profilePicture.startsWith("http")
       ? profilePicture
-      : API_BASE + profilePicture
+      : API_BASE_URL + profilePicture
     : initialsUrl || ""; // fallback if still generating
 
   return (

@@ -1,10 +1,11 @@
+import { API_BASE_URL } from "@/lib/api";
 import { useEffect, useState } from "react";
 
 function FollowButton({ userId, isFollowing }: { userId: number; isFollowing: boolean }) {
   const [following, setFollowing] = useState(isFollowing);
 
   const toggleFollow = async () => {
-    const url = `http://localhost:8000/users/${userId}/${following ? "unfollow" : "follow"}`;
+    const url = `${API_BASE_URL}/users/${userId}/${following ? "unfollow" : "follow"}`;
     const method = following ? "DELETE" : "POST";
 
     await fetch(url, {

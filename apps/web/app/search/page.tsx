@@ -4,6 +4,7 @@ import { useState } from "react"
 import AlbumCard from "../../components/AlbumCard"
 import SearchBar from "../../components/SearchBar"
 import UserCard from "../../components/UserCard"
+import { API_BASE_URL } from "@/lib/api"
 type SpotifyAlbum = {
   id: string;
   name: string;
@@ -35,8 +36,8 @@ export default function SearchPage() {
       setLastQuery(query)
 
       // Search albums
-      const albumRes = await fetch(`http://localhost:8000/spotify/search?query=${encodeURIComponent(query)}`, { cache: "no-store" })
-      const userRes = await fetch(`http://localhost:8000/users?q=${encodeURIComponent(query)}`, { cache: "no-store" })
+      const albumRes = await fetch(`${API_BASE_URL}/spotify/search?query=${encodeURIComponent(query)}`, { cache: "no-store" })
+      const userRes = await fetch(`${API_BASE_URL}/users?q=${encodeURIComponent(query)}`, { cache: "no-store" })
 
       const albumData = albumRes.ok ? await albumRes.json() : null
       const userData = userRes.ok ? await userRes.json() : null

@@ -1,6 +1,7 @@
 import AlbumCard from "../components/AlbumCard"
 import React from "react";
 import Link from "next/link";
+import { API_BASE_URL } from "@/lib/api";
 
 type SpotifyAlbum = {
   id: string;
@@ -20,7 +21,7 @@ type UiAlbum = {
 async function getAlbums(): Promise<UiAlbum[]> {
   try {
     const currentYear = new Date().getFullYear();
-    const res = await fetch(`http://localhost:8000/spotify/search?query=year:${currentYear}`, {
+    const res = await fetch(`${API_BASE_URL}/spotify/search?query=year:${currentYear}`, {
       cache: "no-store",
     });
     if (!res.ok) return [];

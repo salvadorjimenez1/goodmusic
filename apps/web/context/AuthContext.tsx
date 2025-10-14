@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { apiFetch } from "../lib/api";
+import { API_BASE_URL } from "../lib/api";
 
 type User = {
   id: number;
@@ -21,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   async function login(username: string, password: string) {
-    const res = await fetch("http://localhost:8000/login", {
+    const res = await fetch(`${API_BASE_URL}/login`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ username, password }),
@@ -45,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function register(username: string, email: string, password: string, confirmPassword: string) {
-    const res = await fetch("http://localhost:8000/register", {
+    const res = await fetch(`${API_BASE_URL}/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, email, password, confirm_password: confirmPassword }),

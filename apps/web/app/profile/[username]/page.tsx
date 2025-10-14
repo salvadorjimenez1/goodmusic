@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "../../../context/AuthContext";
-import { apiFetch } from "../../../lib/api";
+import { API_BASE_URL, apiFetch } from "../../../lib/api";
 import AlbumCard from "../../../components/AlbumCard";
 import ReviewCard from "../../../components/ReviewCard";
 import Modal from "../../../components/Modal";
@@ -170,7 +170,7 @@ export default function ProfilePage() {
     formData.append("file", file);
 
     await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/users/${profileUser.id}/profile-picture`,
+      `${API_BASE_URL}/users/${profileUser.id}/profile-picture`,
       {
         method: "POST",
         headers: {

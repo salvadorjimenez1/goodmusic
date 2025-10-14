@@ -1,5 +1,7 @@
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -30,7 +32,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = localStorage.getItem("refresh_token");
   if (!refreshToken) return null;
 
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const baseUrl = API_BASE_URL;
   const res = await fetch(`${baseUrl}/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

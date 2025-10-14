@@ -5,7 +5,7 @@ import Image from "next/image";
 import { Star } from "lucide-react";
 import ReviewSection from "../../../components/ReviewSelection";
 import AlbumActionButtons from "../../../components/AlbumActionButtons";
-import { apiFetch } from "../../../lib/api";
+import { apiFetch, API_BASE_URL } from "../../../lib/api";
 
 type SpotifyAlbum = {
   id: string;
@@ -69,7 +69,7 @@ export default function AlbumDetailPage({ params }: { params: Promise<{ id: stri
     (async () => {
       try {
         // fetch album from backend
-        const res = await fetch(`http://localhost:8000/spotify/albums/${id}`, { cache: "no-store" });
+        const res = await fetch(`${API_BASE_URL}/spotify/albums/${id}`, { cache: "no-store" });
         if (!res.ok) return;
         const data: SpotifyAlbum = await res.json();
         setAlbum({
