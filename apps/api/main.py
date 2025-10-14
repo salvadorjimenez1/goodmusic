@@ -30,7 +30,7 @@ from jose import JWTError, jwt
 from config import (SECRET_KEY, ALGORITHM, SPOTIFY_CLIENT_ID, 
                     SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI, 
                     MAIL_USERNAME, MAIL_PASSWORD, MAIL_PORT, MAIL_SERVER, CORS_ORIGINS,
-                     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_NAME)
+                     AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_NAME, FRONTEND_URL)
 import httpx, base64, time
 from datetime import datetime, timedelta, timezone
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +40,7 @@ import aiosmtplib
 from email.mime.text import MIMEText
 import boto3
 from uuid import uuid4
+from email.utils import formataddr
 
 
 
@@ -94,7 +95,7 @@ async def get_spotify_app_token() -> str:
 
 async def send_verification_email(email: str, token: str):
     # Build the verification link
-    link = f"http://localhost:3000/verify?token={token}"  # later replace with FRONTEND_URL
+    link = f"{FRONTEND_URL}/verify?token={token}"
     body = f"""
     🎶 Welcome to GoodMusic!
 
@@ -106,7 +107,7 @@ async def send_verification_email(email: str, token: str):
 
     # Construct MIME email
     msg = MIMEText(body, "plain")
-    msg["From"] = MAIL_USERNAME
+    msg["From"] = formataddr(("GoodMusic", MAIL_USERNAME))
     msg["To"] = email
     msg["Subject"] = "Verify your GoodMusic account"
 
