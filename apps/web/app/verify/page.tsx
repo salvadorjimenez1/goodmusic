@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { API_BASE_URL } from "@/lib/api";
 
-export default function VerifyPage() {
+function VerifyPageContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
   const [status, setStatus] = useState<string | null>(null);
@@ -54,5 +54,13 @@ useEffect(() => {
         </p>
       )}
     </div>
+  );
+}
+
+export default function VerifyPage() {
+  return (
+    <Suspense fallback={<p className="text-gray-400">Loading verification...</p>}>
+      <VerifyPageContent />
+    </Suspense>
   );
 }
