@@ -29,7 +29,7 @@ export default function Navbar() {
 
   return (
     <nav className="bg-gray-900 shadow-md sticky top-0 z-50">
-      <div className="max-w-6xl mx-auto flex items-center justify-between px-6 py-3">
+      <div className="max-w-6xl mx-auto relative flex items-center px-6 py-3">
         {/* Left: Logo */}
         <Link href="/" className="text-3xl font-extrabold">
         <span className="bg-gradient-to-r from-pink-500 via-purple-400 to-indigo-100 bg-clip-text text-transparent">
@@ -39,7 +39,7 @@ export default function Navbar() {
       </Link>
 
       {/* Center: Desktop Nav */}
-      <ul className="hidden md:flex gap-10 text-gray-200 text-lg font-medium">
+      <ul className="hidden md:flex absolute left-1/2 -translate-x-1/2 gap-10 text-gray-200 text-lg font-medium">
         {navItems.map((item) => (
           <li key={item.href}>
             <Link
